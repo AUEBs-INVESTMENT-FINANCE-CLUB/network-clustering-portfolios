@@ -944,7 +944,7 @@ if __name__ == "__main__":
         ec_plot_dict = nx.eigenvector_centrality(in_sample_graph, weight="weight", max_iter=2000)
     except Exception:
         ec_plot_dict = nx.eigenvector_centrality_numpy(in_sample_graph, weight="weight")
-
+    
     ec_plot = pd.Series(ec_plot_dict).reindex(list(in_sample_graph.nodes())).fillna(0.0).astype(float)
     ec_vals = ec_plot.values
 
@@ -990,7 +990,11 @@ if __name__ == "__main__":
         in_sample_returns, periods_per_year=PERIODS_PER_YEAR
     )
 
-    stats_for_kmeans = stats
+    if KMEANS_REMOVE_OUTLIERS:
+        stats_for_kmeans, _ = remove_outliers_zscore(stats, ["Return", "Volatility"], z=KMEANS_OUTLIER_Z)
+    else:
+        stats_for_kmeans = stats
+
     fig_elbow = plot_kmeans_elbow(
         stats_for_kmeans,
         KMEANS_ELBOW_MIN_K,
@@ -1038,7 +1042,7 @@ if __name__ == "__main__":
         "markowitz_minvar": ("blue", "-", "Markowitz Min-Var"),
         "markowitz_maxsharpe": ("purple", "--", "Markowitz Max-Sharpe"),
         "degeneracy": ("green", "-", "Degeneracy Selection"),
-        "eigen_central": ("orange", "-", "Eigen Centrality"),
+        "eigen_central": ("orange", "-", "Eigen Centrality (Inverse)"),
         "cluster_equal": ("magenta", ":", "Cluster Equal Weight"),
         "kmeans": ("black", "-", "K-Means"),
         "herc": ("brown", ":", "HERC"),
@@ -1050,6 +1054,7 @@ if __name__ == "__main__":
     metrics_is = metrics_table_from_values(
         in_sample_data, portfolios, bench_name="FTSE100"
     )
+    metrics_is.to_csv(OUTPUT_DIR / f"metrics_in_sample_{IN_SAMPLE_START}_{IN_SAMPLE_END}.csv")
 
     fig_cum_is = plot_cumulative_returns(
         in_sample_data,
@@ -1068,5 +1073,51 @@ if __name__ == "__main__":
     )
     save_plotly(fig_mv_is, f"mean_variance_in_sample_{IN_SAMPLE_START}_{IN_SAMPLE_END}.html")
 
+    print("\n--- IN-SAMPLE METRICS (Training Phase) ---")
     print(metrics_is)
-    print("Saved outputs to:", OUTPUT_DIR.resolve())
+
+    print(f"\n--- RUNNING OUT-OF-SAMPLE ANALYSIS ({OUT_SAMPLE_START}-{OUT_SAMPLE_END}) ---")
+    
+    out_sample_raw = metadata[OUT_SAMPLE_START:OUT_SAMPLE_END].copy()
+    
+    out_sample_returns, out_sample_correlation, out_sample_prices = preprocess_returns(
+        out_sample_raw, components, min_data_availability=MIN_DATA_AVAILABILITY
+    )
+
+    out_sample_data = out_sample_prices.copy()
+    out_sample_data["FTSE100"] = metadata.loc[out_sample_data.index, "FTSE100"].ffill()
+
+    out_sample_data["markowitz_minvar"] = compute_weighted_portfolio(out_sample_data, minvar_w, "markowitz_minvar")
+    out_sample_data["markowitz_maxsharpe"] = compute_weighted_portfolio(out_sample_data, maxsharpe_w, "markowitz_maxsharpe")
+    out_sample_data["degeneracy"] = compute_equal_weighted_portfolio(out_sample_data, selected_stocks_deg, "degeneracy")
+    out_sample_data["eigen_central"] = compute_weighted_portfolio(out_sample_data, eigen_w_central, "eigen_central")
+    out_sample_data["cluster_equal"] = compute_weighted_portfolio(out_sample_data, cluster_w, "cluster_equal")
+    out_sample_data["herc"] = compute_weighted_portfolio(out_sample_data, herc_w, "herc")
+    out_sample_data["kmeans"] = compute_weighted_portfolio(out_sample_data, kmeans_w, "kmeans")
+
+    metrics_os = metrics_table_from_values(
+        out_sample_data, portfolios, bench_name="FTSE100"
+    )
+    metrics_os.to_csv(OUTPUT_DIR / f"metrics_out_sample_{OUT_SAMPLE_START}_{OUT_SAMPLE_END}.csv")
+
+    print("\n--- OUT-OF-SAMPLE METRICS (Test Phase) ---")
+    print(metrics_os)
+
+    fig_cum_os = plot_cumulative_returns(
+        out_sample_data,
+        portfolios,
+        style_map,
+        f"Cumulative Returns (%) ({OUT_SAMPLE_START}-{OUT_SAMPLE_END})"
+    )
+    save_plotly(fig_cum_os, f"cumulative_out_sample_{OUT_SAMPLE_START}_{OUT_SAMPLE_END}.html")
+
+    fig_mv_os = plot_mean_variance_scatter(
+        out_sample_data,
+        portfolios,
+        label_map,
+        color_map,
+        f"Mean-Variance Analysis ({OUT_SAMPLE_START}-{OUT_SAMPLE_END})"
+    )
+    save_plotly(fig_mv_os, f"mean_variance_out_sample_{OUT_SAMPLE_START}_{OUT_SAMPLE_END}.html")
+
+    print(f"\nCompleted successfully. All outputs saved to: {OUTPUT_DIR.resolve()}")
