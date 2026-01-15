@@ -196,6 +196,8 @@ def plotly_network(
     selected_color: str = "#EC2049",
     default_color: str = "#D3D3D3",
     color_mode: str = "selected",
+    node_values: np.ndarray | None = None,
+    colorbar_title: str = "Value",
 ) -> go.Figure:
     if selected is None:
         selected = []
@@ -229,24 +231,47 @@ def plotly_network(
     deg_vals = np.array([degrees.get(n, 0) for n in nodes], dtype=float)
     is_selected = np.array([n in selected for n in nodes])
 
-    size = 12 + 28 * (deg_vals / (deg_vals.max() if deg_vals.max() > 0 else 1.0))
-    size = np.clip(size, 10, 45)
+    if color_mode == "continuous":
+        if node_values is None:
+            node_values = deg_vals.copy()
+        vals = np.asarray(node_values, dtype=float)
+        vmax = float(np.nanmax(vals)) if np.isfinite(vals).any() else 0.0
+        if vmax <= 0:
+            vmax = 1.0
+        size = 12 + 28 * (vals / vmax)
+        size = np.clip(size, 10, 45)
 
-    if color_mode == "selected":
-        color_vals = np.where(is_selected, selected_color, default_color)
-        colorscale = None
-        showscale = False
-        colorbar = None
-    else:
-        color_vals = deg_vals
+        color_vals = vals
         colorscale = "Plasma"
         showscale = True
-        colorbar = dict(title="Degree")
+        colorbar = dict(title=colorbar_title)
 
-    line_width = np.where(is_selected, 2.5, 1.0)
-    line_color = np.where(is_selected, "rgba(0,0,0,0.85)", "rgba(0,0,0,0.35)")
+        line_width = np.where(is_selected, 2.5, 1.0)
+        line_color = np.where(is_selected, "rgba(0,0,0,0.85)", "rgba(0,0,0,0.35)")
 
-    hovertext = [f"<b>{n}</b><br>degree: {degrees.get(n, 0)}" for n in nodes]
+        hovertext = [
+            f"<b>{n}</b><br>value: {float(vals[i]):.6f}<br>degree: {degrees.get(n, 0)}"
+            for i, n in enumerate(nodes)
+        ]
+    else:
+        size = 12 + 28 * (deg_vals / (deg_vals.max() if deg_vals.max() > 0 else 1.0))
+        size = np.clip(size, 10, 45)
+
+        if color_mode == "selected":
+            color_vals = np.where(is_selected, selected_color, default_color)
+            colorscale = None
+            showscale = False
+            colorbar = None
+        else:
+            color_vals = deg_vals
+            colorscale = "Plasma"
+            showscale = True
+            colorbar = dict(title="Degree")
+
+        line_width = np.where(is_selected, 2.5, 1.0)
+        line_color = np.where(is_selected, "rgba(0,0,0,0.85)", "rgba(0,0,0,0.35)")
+
+        hovertext = [f"<b>{n}</b><br>degree: {degrees.get(n, 0)}" for n in nodes]
 
     node_trace = go.Scatter(
         x=x,
@@ -487,14 +512,21 @@ def eigenvector_centrality_weights(graph: nx.Graph, components: List[str], inver
     except Exception:
         ec_dict = nx.eigenvector_centrality_numpy(graph, weight="weight")
 
-    ec = pd.Series(ec_dict, name="eigen_centrality").reindex(components).fillna(0.0)
+    ec = pd.Series(ec_dict, name="eigen_centrality").reindex(components).fillna(0.0).astype(float)
+
+    if ec.max() <= 0:
+        w = pd.Series(1.0, index=components, name="eigen_centrality")
+        return w / w.sum()
 
     if inverse:
-        ec = 1.0 / (ec.replace(0, np.nan))
-        ec = ec.fillna(0.0)
+        eps = 1e-12
+        inv = (ec.max() - ec).clip(lower=0.0) + eps
+        ec = inv
 
     if ec.sum() != 0:
         ec = ec / ec.sum()
+
+    ec.name = "eigen_centrality"
     return ec
 
 
@@ -703,10 +735,8 @@ def plot_kmeans_elbow(stats_df: pd.DataFrame, k_min: int, k_max: int, scale: boo
 def kmeans_cluster_retvol(stats_df: pd.DataFrame, k: int, scale: bool = True) -> Tuple[pd.Series, pd.DataFrame, KMeans, np.ndarray]:
     X_raw = stats_df[["Return", "Volatility"]].values
     X = X_raw.copy()
-    scaler = None
     if scale:
-        scaler = StandardScaler()
-        X = scaler.fit_transform(X)
+        X = StandardScaler().fit_transform(X)
 
     model = KMeans(n_clusters=k, random_state=KMEANS_RANDOM_STATE, n_init=20)
     labels = model.fit_predict(X)
@@ -866,19 +896,29 @@ if __name__ == "__main__":
     upper = upper[~np.isnan(upper)]
     threshold = np.quantile(upper, NETWORK_THRESHOLD_QUANTILE)
 
-    in_sample_graph, in_sample_layout = create_graph(components, in_sample_correlation, threshold)
-    in_sample_full_graph = create_full_correlation_graph(components, in_sample_correlation)
+    in_sample_graph, in_sample_layout = create_graph(
+        components, in_sample_correlation, threshold
+    )
+    in_sample_full_graph = create_full_correlation_graph(
+        components, in_sample_correlation
+    )
 
     minvar_w, maxsharpe_w = compute_markowitz_weights(in_sample_returns, allow_short=False)
     validate_portfolio_weights(minvar_w, "markowitz_minvar")
     validate_portfolio_weights(maxsharpe_w, "markowitz_maxsharpe")
 
-    in_sample_data["markowitz_minvar"] = compute_weighted_portfolio(in_sample_data, minvar_w, "markowitz_minvar")
-    in_sample_data["markowitz_maxsharpe"] = compute_weighted_portfolio(in_sample_data, maxsharpe_w, "markowitz_maxsharpe")
+    in_sample_data["markowitz_minvar"] = compute_weighted_portfolio(
+        in_sample_data, minvar_w, "markowitz_minvar"
+    )
+    in_sample_data["markowitz_maxsharpe"] = compute_weighted_portfolio(
+        in_sample_data, maxsharpe_w, "markowitz_maxsharpe"
+    )
 
     isolated, independence = degeneracy_ordering(in_sample_graph, components)
     selected_stocks_deg = isolated + independence
-    in_sample_data["degeneracy"] = compute_equal_weighted_portfolio(in_sample_data, selected_stocks_deg, "degeneracy")
+    in_sample_data["degeneracy"] = compute_equal_weighted_portfolio(
+        in_sample_data, selected_stocks_deg, "degeneracy"
+    )
 
     fig_deg = plotly_network(
         in_sample_graph,
@@ -892,63 +932,95 @@ if __name__ == "__main__":
     )
     save_plotly(fig_deg, f"network_degeneracy_{IN_SAMPLE_START}_{IN_SAMPLE_END}.html")
 
-    eigen_w_central = eigenvector_centrality_weights(in_sample_full_graph, components)
+    eigen_w_central = eigenvector_centrality_weights(
+        in_sample_graph, components, inverse=True
+    )
     validate_portfolio_weights(eigen_w_central, "eigen_central")
-    in_sample_data["eigen_central"] = compute_weighted_portfolio(in_sample_data, eigen_w_central, "eigen_central")
+    in_sample_data["eigen_central"] = compute_weighted_portfolio(
+        in_sample_data, eigen_w_central, "eigen_central"
+    )
 
-    cluster_labels, Z_cluster = hierarchical_clusters_from_corr(in_sample_correlation, method="average", max_clusters=HIER_MAX_CLUSTERS)
+    try:
+        ec_plot_dict = nx.eigenvector_centrality(in_sample_graph, weight="weight", max_iter=2000)
+    except Exception:
+        ec_plot_dict = nx.eigenvector_centrality_numpy(in_sample_graph, weight="weight")
+
+    ec_plot = pd.Series(ec_plot_dict).reindex(list(in_sample_graph.nodes())).fillna(0.0).astype(float)
+    ec_vals = ec_plot.values
+
+    fig_eigen = plotly_network(
+        in_sample_graph,
+        in_sample_layout,
+        title="Eigenvector Centrality Network",
+        show_labels=False,
+        color_mode="continuous",
+        node_values=ec_vals,
+        colorbar_title="Eigenvector Centrality",
+    )
+    save_plotly(fig_eigen, f"network_eigen_centrality_{IN_SAMPLE_START}_{IN_SAMPLE_END}.html")
+
+    cluster_labels, Z_cluster = hierarchical_clusters_from_corr(
+        in_sample_correlation, method="average", max_clusters=HIER_MAX_CLUSTERS
+    )
     cluster_w = cluster_equal_weights(cluster_labels)
     validate_portfolio_weights(cluster_w, "cluster_equal")
-    in_sample_data["cluster_equal"] = compute_weighted_portfolio(in_sample_data, cluster_w, "cluster_equal")
-    save_dendrogram(Z_cluster, list(in_sample_correlation.index), "Dendrogram: Cluster Equal-Weight (average, corr-distance)", f"dendrogram_cluster_equal_{IN_SAMPLE_START}_{IN_SAMPLE_END}.png")
+    in_sample_data["cluster_equal"] = compute_weighted_portfolio(
+        in_sample_data, cluster_w, "cluster_equal"
+    )
+    save_dendrogram(
+        Z_cluster,
+        list(in_sample_correlation.index),
+        "Dendrogram: Cluster Equal-Weight (average, corr-distance)",
+        f"dendrogram_cluster_equal_{IN_SAMPLE_START}_{IN_SAMPLE_END}.png"
+    )
 
     in_sample_cov = in_sample_returns.cov()
-    herc_w = herc_weights(in_sample_cov, max_depth=HERC_MAX_DEPTH, linkage_method="ward", use_distance_of_distance=True)
+    herc_w = herc_weights(
+        in_sample_cov,
+        max_depth=HERC_MAX_DEPTH,
+        linkage_method="ward",
+        use_distance_of_distance=True
+    )
     validate_portfolio_weights(herc_w, "herc")
-    in_sample_data["herc"] = compute_weighted_portfolio(in_sample_data, herc_w, "herc")
+    in_sample_data["herc"] = compute_weighted_portfolio(
+        in_sample_data, herc_w, "herc"
+    )
 
-    std_dev = np.sqrt(np.diag(in_sample_cov.values))
-    denom = np.outer(std_dev, std_dev)
-    denom = np.where(denom == 0, np.nan, denom)
-    corr_from_cov = in_sample_cov.values / denom
-    corr_from_cov = np.nan_to_num(corr_from_cov, nan=0.0, posinf=0.0, neginf=0.0)
-    corr_from_cov = np.clip(corr_from_cov, -1.0, 1.0)
-    np.fill_diagonal(corr_from_cov, 1.0)
-    corr_cov_df = pd.DataFrame(corr_from_cov, index=in_sample_cov.index, columns=in_sample_cov.index)
-    D_herc = corr_distance_of_distance_matrix(corr_cov_df)
-    Z_herc = linkage(squareform(D_herc, checks=False), method="ward")
-    save_dendrogram(Z_herc, list(corr_cov_df.index), "Dendrogram: HERC (ward, distance-of-distance)", f"dendrogram_herc_{IN_SAMPLE_START}_{IN_SAMPLE_END}.png")
+    stats = compute_annualized_return_vol(
+        in_sample_returns, periods_per_year=PERIODS_PER_YEAR
+    )
 
-    stats = compute_annualized_return_vol(in_sample_returns, periods_per_year=PERIODS_PER_YEAR)
-
-    if KMEANS_REMOVE_OUTLIERS:
-        stats_clean, removed = remove_outliers_zscore(stats, ["Return", "Volatility"], z=KMEANS_OUTLIER_Z)
-        stats_for_kmeans = stats_clean
-        save_text(OUTPUT_DIR / f"kmeans_removed_outliers_{IN_SAMPLE_START}_{IN_SAMPLE_END}.txt", "\n".join(removed) if removed else "")
-    else:
-        stats_for_kmeans = stats
-
-    fig_elbow = plot_kmeans_elbow(stats_for_kmeans, KMEANS_ELBOW_MIN_K, KMEANS_ELBOW_MAX_K, scale=KMEANS_SCALE_FEATURES)
+    stats_for_kmeans = stats
+    fig_elbow = plot_kmeans_elbow(
+        stats_for_kmeans,
+        KMEANS_ELBOW_MIN_K,
+        KMEANS_ELBOW_MAX_K,
+        scale=KMEANS_SCALE_FEATURES
+    )
     save_plotly(fig_elbow, f"kmeans_elbow_{IN_SAMPLE_START}_{IN_SAMPLE_END}.html")
 
-    kmeans_labels, stats_with_clusters, kmeans_model, _X_raw = kmeans_cluster_retvol(
+    kmeans_labels, stats_with_clusters, _, _ = kmeans_cluster_retvol(
         stats_for_kmeans, k=KMEANS_K, scale=KMEANS_SCALE_FEATURES
     )
 
     kmeans_w, picked_clusters_df = build_kmeans_weights(
-        stats_with_clusters=stats_with_clusters,
-        labels=kmeans_labels,
-        universe=components,
+        stats_with_clusters,
+        kmeans_labels,
+        components,
         top_clusters=2,
         min_cluster_size=4
     )
     validate_portfolio_weights(kmeans_w, "kmeans")
-    in_sample_data["kmeans"] = compute_weighted_portfolio(in_sample_data, kmeans_w, "kmeans")
+    in_sample_data["kmeans"] = compute_weighted_portfolio(
+        in_sample_data, kmeans_w, "kmeans"
+    )
 
-    picked_clusters = [int(c) for c in picked_clusters_df.index.tolist()] if len(picked_clusters_df) > 0 else []
-    fig_km_scatter = plot_kmeans_scatter(stats_with_clusters, picked_clusters=picked_clusters, title=f"K-Means (k={KMEANS_K}) Clusters: Annualized Return vs Volatility")
+    fig_km_scatter = plot_kmeans_scatter(
+        stats_with_clusters,
+        picked_clusters=list(picked_clusters_df.index),
+        title=f"K-Means (k={KMEANS_K}) Clusters: Annualized Return vs Volatility"
+    )
     save_plotly(fig_km_scatter, f"kmeans_scatter_{IN_SAMPLE_START}_{IN_SAMPLE_END}.html")
-    picked_clusters_df.to_csv(OUTPUT_DIR / f"kmeans_picked_clusters_{IN_SAMPLE_START}_{IN_SAMPLE_END}.csv")
 
     portfolios = [
         "FTSE100",
@@ -972,50 +1044,29 @@ if __name__ == "__main__":
         "herc": ("brown", ":", "HERC"),
     }
 
-    label_map = {p: style_map.get(p, ("", "", p))[2] for p in portfolios}
-    color_map = {k: v[0] for k, v in style_map.items()}
+    label_map = {p: style_map[p][2] for p in portfolios}
+    color_map = {p: style_map[p][0] for p in portfolios}
 
-    metrics_is = metrics_table_from_values(in_sample_data, portfolios, bench_name="FTSE100")
-    metrics_is.to_csv(OUTPUT_DIR / f"metrics_in_sample_{IN_SAMPLE_START}_{IN_SAMPLE_END}.csv")
+    metrics_is = metrics_table_from_values(
+        in_sample_data, portfolios, bench_name="FTSE100"
+    )
 
-    fig_cum_is = plot_cumulative_returns(in_sample_data, portfolios, style_map, f"Cumulative Returns (%) ({IN_SAMPLE_START}-{IN_SAMPLE_END})")
+    fig_cum_is = plot_cumulative_returns(
+        in_sample_data,
+        portfolios,
+        style_map,
+        f"Cumulative Returns (%) ({IN_SAMPLE_START}-{IN_SAMPLE_END})"
+    )
     save_plotly(fig_cum_is, f"cumulative_in_sample_{IN_SAMPLE_START}_{IN_SAMPLE_END}.html")
 
-    fig_mv_is = plot_mean_variance_scatter(in_sample_data, portfolios, label_map, color_map, f"Mean-Variance Analysis ({IN_SAMPLE_START}-{IN_SAMPLE_END})")
+    fig_mv_is = plot_mean_variance_scatter(
+        in_sample_data,
+        portfolios,
+        label_map,
+        color_map,
+        f"Mean-Variance Analysis ({IN_SAMPLE_START}-{IN_SAMPLE_END})"
+    )
     save_plotly(fig_mv_is, f"mean_variance_in_sample_{IN_SAMPLE_START}_{IN_SAMPLE_END}.html")
 
-    out_sample_raw = metadata[OUT_SAMPLE_START:OUT_SAMPLE_END].copy()
-    out_sample_returns, out_sample_correlation, out_sample_prices = preprocess_returns(
-        out_sample_raw, components, min_data_availability=MIN_DATA_AVAILABILITY
-    )
-
-    fig_corr_os = plotly_correlation_heatmap(
-        out_sample_correlation,
-        title=f"FTSE100 Constituents Correlation Heatmap ({OUT_SAMPLE_START}-{OUT_SAMPLE_END})",
-        show_values=False
-    )
-    save_plotly(fig_corr_os, f"corr_heatmap_{OUT_SAMPLE_START}_{OUT_SAMPLE_END}.html")
-
-    out_sample_data = out_sample_prices.copy()
-    out_sample_data["FTSE100"] = metadata.loc[out_sample_data.index, "FTSE100"].ffill()
-
-    out_sample_data["markowitz_minvar"] = compute_weighted_portfolio(out_sample_data, minvar_w, "markowitz_minvar")
-    out_sample_data["markowitz_maxsharpe"] = compute_weighted_portfolio(out_sample_data, maxsharpe_w, "markowitz_maxsharpe")
-    out_sample_data["degeneracy"] = compute_equal_weighted_portfolio(out_sample_data, selected_stocks_deg, "degeneracy")
-    out_sample_data["eigen_central"] = compute_weighted_portfolio(out_sample_data, eigen_w_central, "eigen_central")
-    out_sample_data["cluster_equal"] = compute_weighted_portfolio(out_sample_data, cluster_w, "cluster_equal")
-    out_sample_data["kmeans"] = compute_weighted_portfolio(out_sample_data, kmeans_w, "kmeans")
-    out_sample_data["herc"] = compute_weighted_portfolio(out_sample_data, herc_w, "herc")
-
-    metrics_os = metrics_table_from_values(out_sample_data, portfolios, bench_name="FTSE100")
-    metrics_os.to_csv(OUTPUT_DIR / f"metrics_out_sample_{OUT_SAMPLE_START}_{OUT_SAMPLE_END}.csv")
-
-    fig_cum_os = plot_cumulative_returns(out_sample_data, portfolios, style_map, f"Cumulative Returns (%) ({OUT_SAMPLE_START}-{OUT_SAMPLE_END})")
-    save_plotly(fig_cum_os, f"cumulative_out_sample_{OUT_SAMPLE_START}_{OUT_SAMPLE_END}.html")
-
-    fig_mv_os = plot_mean_variance_scatter(out_sample_data, portfolios, label_map, color_map, f"Mean-Variance Analysis ({OUT_SAMPLE_START}-{OUT_SAMPLE_END})")
-    save_plotly(fig_mv_os, f"mean_variance_out_sample_{OUT_SAMPLE_START}_{OUT_SAMPLE_END}.html")
-
-    print("Saved outputs to:", str(OUTPUT_DIR.resolve()))
-    print("In-sample metrics:", str((OUTPUT_DIR / f"metrics_in_sample_{IN_SAMPLE_START}_{IN_SAMPLE_END}.csv").resolve()))
-    print("Out-of-sample metrics:", str((OUTPUT_DIR / f"metrics_out_sample_{OUT_SAMPLE_START}_{OUT_SAMPLE_END}.csv").resolve()))
+    print(metrics_is)
+    print("Saved outputs to:", OUTPUT_DIR.resolve())
