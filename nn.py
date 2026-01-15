@@ -40,16 +40,6 @@ KMEANS_RANDOM_STATE = 42
 
 OUTPUT_DIR = Path("outputs")
 
-
-def ensure_outputs_dir() -> None:
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def save_text(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-
-
 def load_ftse100_data(csv_file: str = "ftse_stock_prices.csv") -> Tuple[pd.DataFrame, List[str]]:
     try:
         df = pd.read_csv(csv_file, keep_default_na=True)
@@ -868,7 +858,6 @@ def metrics_table_from_values(portfolio_values: pd.DataFrame, portfolios: List[s
 
 
 if __name__ == "__main__":
-    ensure_outputs_dir()
 
     metadata, components = load_ftse100_data("ftse_stock_prices.csv")
     if metadata.empty:
@@ -902,7 +891,6 @@ if __name__ == "__main__":
     in_sample_full_graph = create_full_correlation_graph(
         components, in_sample_correlation
     )
-
     minvar_w, maxsharpe_w = compute_markowitz_weights(in_sample_returns, allow_short=False)
     validate_portfolio_weights(minvar_w, "markowitz_minvar")
     validate_portfolio_weights(maxsharpe_w, "markowitz_maxsharpe")
@@ -1025,7 +1013,6 @@ if __name__ == "__main__":
         title=f"K-Means (k={KMEANS_K}) Clusters: Annualized Return vs Volatility"
     )
     save_plotly(fig_km_scatter, f"kmeans_scatter_{IN_SAMPLE_START}_{IN_SAMPLE_END}.html")
-
     portfolios = [
         "FTSE100",
         "markowitz_minvar",
