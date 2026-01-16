@@ -154,12 +154,9 @@ def herc_weights(
         cov_1 = cov_sorted.loc[items_1, items_1].values
         cov_2 = cov_sorted.loc[items_2, items_2].values
 
-        n1, n2 = len(group_1), len(group_2)
-        w1_equal = np.ones(n1) / n1
-        w2_equal = np.ones(n2) / n2
+        var_1 = compute_cluster_variance(cov_1)
+        var_2 = compute_cluster_variance(cov_2)
 
-        var_1 = float(w1_equal.T @ cov_1 @ w1_equal)
-        var_2 = float(w2_equal.T @ cov_2 @ w2_equal)
 
         total_var = var_1 + var_2
         if total_var > 0:
@@ -254,7 +251,6 @@ def plot_kmeans_scatter(stats_with_clusters: pd.DataFrame, picked_clusters: List
     dfp = stats_with_clusters.reset_index().rename(columns={"index": "Ticker"})
     dfp["Cluster"] = dfp["Cluster"].astype(int)
 
-    # Base scatter: ONLY the 4 clusters (no Picked=True/False dimension => no True/False legend)
     fig = px.scatter(
         dfp,
         x="Return",

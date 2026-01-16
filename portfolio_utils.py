@@ -1,33 +1,40 @@
 from typing import List
-
 import numpy as np
 import pandas as pd
 
 
 def compute_weighted_portfolio(prices: pd.DataFrame, weights: pd.Series, name: str = "portfolio") -> pd.Series:
-    common = [c for c in weights.index if c in prices.columns]
-    if not common:
+    if prices is None or len(prices) == 0 or weights is None or len(weights) == 0:
+        return pd.Series(0.0, index=prices.index if prices is not None else None, name=name)
+
+    w = weights.astype(float).copy()
+    s = float(w.sum())
+    if s == 0.0:
         return pd.Series(0.0, index=prices.index, name=name)
 
-    w = weights.loc[common].astype(float).values
-    if w.sum() != 0:
-        w = w / w.sum()
+    X = prices.reindex(columns=w.index).copy()
+    X = X.ffill()
 
-    normed = prices[common] / prices[common].iloc[0]
-    portfolio = (normed * w).sum(axis=1)
+    first = X.iloc[0].copy()
+    if first.isna().any():
+        miss = first.index[first.isna()]
+        X.loc[X.index[0], miss] = 1.0
+        X = X.ffill()
+
+    first = X.iloc[0]
+    normed = X.divide(first, axis=1)
+
+    portfolio = normed.mul(w, axis=1).sum(axis=1)
     portfolio.name = name
     return portfolio
 
 
 def compute_equal_weighted_portfolio(prices: pd.DataFrame, selected_stocks: List[str], name: str = "portfolio") -> pd.Series:
     selected = [s for s in selected_stocks if s in prices.columns]
-    if not selected:
+    if len(selected) == 0:
         return pd.Series(0.0, index=prices.index, name=name)
-
-    normed = prices[selected] / prices[selected].iloc[0]
-    portfolio = normed.mean(axis=1)
-    portfolio.name = name
-    return portfolio
+    w = pd.Series(1.0 / len(selected), index=selected, dtype=float)
+    return compute_weighted_portfolio(prices, w, name=name)
 
 
 def validate_portfolio_weights(weights: pd.Series, name: str = "portfolio", tolerance: float = 1e-4) -> None:

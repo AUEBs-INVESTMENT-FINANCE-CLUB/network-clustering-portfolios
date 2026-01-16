@@ -14,9 +14,7 @@ from config import (
 )
 
 from data_io import load_ftse100_data, preprocess_returns
-from portfolio_utils import (
-    compute_weighted_portfolio, compute_equal_weighted_portfolio, validate_portfolio_weights
-)
+from portfolio_utils import compute_weighted_portfolio, compute_equal_weighted_portfolio, validate_portfolio_weights
 from networks import (
     create_graph, create_full_correlation_graph, degeneracy_ordering,
     eigenvector_centrality_weights, plotly_network
@@ -34,6 +32,15 @@ from plots import (
 from metrics import metrics_table_from_values
 
 
+def restrict_weights_to_universe(weights: pd.Series, universe: list, name: str) -> pd.Series:
+    w = weights.reindex(universe).fillna(0.0).astype(float)
+    s = float(w.sum())
+    if s != 0.0:
+        w = w / s
+    w.name = name
+    return w
+
+
 def compute_markowitz_weights(returns: pd.DataFrame, allow_short: bool = False):
     returns = returns.dropna(axis=1, how="all")
     if returns.shape[1] == 0:
@@ -46,11 +53,7 @@ def compute_markowitz_weights(returns: pd.DataFrame, allow_short: bool = False):
     Sigma = 0.5 * (Sigma + Sigma.T)
     Sigma = Sigma + 1e-10 * np.eye(n)
 
-    if allow_short:
-        bounds = [(-1.0, 1.0)] * n
-    else:
-        bounds = [(0.0, 1.0)] * n
-
+    bounds = [(-1.0, 1.0)] * n if allow_short else [(0.0, 1.0)] * n
     cons = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
     w0 = np.ones(n) / n
 
@@ -96,15 +99,39 @@ def compute_markowitz_weights(returns: pd.DataFrame, allow_short: bool = False):
 
 
 if __name__ == "__main__":
-
-    metadata, components = load_ftse100_data("ftse_stock_prices.csv")
+    metadata, all_components = load_ftse100_data("ftse_stock_prices.csv")
     if metadata.empty:
         raise SystemExit(1)
 
-    in_sample_raw = metadata[IN_SAMPLE_START:IN_SAMPLE_END].copy()
+    metadata = metadata.sort_index()
+
+    out_sample_raw_all = metadata.loc[OUT_SAMPLE_START:OUT_SAMPLE_END].copy()
+    if len(out_sample_raw_all) == 0:
+        raise ValueError("Out-of-sample window is empty. Check OUT_SAMPLE_START/OUT_SAMPLE_END.")
+
+    out_prices_all = out_sample_raw_all.reindex(columns=all_components).sort_index().ffill()
+    nonempty_idx = out_prices_all.dropna(how="all").index
+    if len(nonempty_idx) == 0:
+        raise ValueError("Out-of-sample prices are all NaN even after ffill. Check your data coverage.")
+    test_start_date = nonempty_idx.min()
+
+    universe_start = out_prices_all.loc[test_start_date].dropna().index.tolist()
+    if len(universe_start) == 0:
+        raise ValueError("Frozen universe is empty at out-of-sample start (after ffill).")
+
+    in_sample_raw = metadata.loc[IN_SAMPLE_START:IN_SAMPLE_END].copy()
     in_sample_returns, in_sample_correlation, in_sample_prices = preprocess_returns(
-        in_sample_raw, components, min_data_availability=MIN_DATA_AVAILABILITY
+    in_sample_raw, universe_start, min_data_availability=MIN_DATA_AVAILABILITY
     )
+
+    components = list(in_sample_prices.columns)
+    if len(components) == 0:
+        raise ValueError("No components remain after in-sample preprocessing.")
+
+    out_prices_all = out_prices_all.reindex(columns=components)
+    if out_prices_all.loc[test_start_date].isna().any():
+        missing = out_prices_all.columns[out_prices_all.loc[test_start_date].isna()].tolist()
+        raise ValueError(f"Some in-sample components have no price at test start: {missing}")
 
     fig_corr_is = plotly_correlation_heatmap(
         in_sample_correlation,
@@ -113,43 +140,36 @@ if __name__ == "__main__":
     )
     save_plotly(fig_corr_is, f"corr_heatmap_{IN_SAMPLE_START}_{IN_SAMPLE_END}.html")
 
-    in_sample_data = in_sample_prices.copy()
+    in_sample_data = in_sample_prices[components].copy()
     in_sample_data["FTSE100"] = metadata.loc[in_sample_data.index, "FTSE100"].ffill()
-
-    components = list(in_sample_returns.columns)
 
     corr_vals = in_sample_correlation.values
     upper = corr_vals[np.triu_indices_from(corr_vals, k=1)]
     upper = upper[~np.isnan(upper)]
     threshold = np.quantile(upper, NETWORK_THRESHOLD_QUANTILE)
 
-    in_sample_graph, in_sample_layout = create_graph(
-        components, in_sample_correlation, threshold
-    )
-    in_sample_full_graph = create_full_correlation_graph(
-        components, in_sample_correlation
+    in_sample_graph, in_sample_layout = create_graph(components, in_sample_correlation, threshold)
+    in_sample_full_graph = create_full_correlation_graph(components, in_sample_correlation)
+
+    in_sample_simple_returns = pd.DataFrame(
+        np.expm1(in_sample_returns.values),
+        index=in_sample_returns.index,
+        columns=in_sample_returns.columns
     )
 
-    in_sample_simple_returns = in_sample_prices[components].pct_change().dropna(how="all")
-    in_sample_simple_returns = in_sample_simple_returns.dropna(how="any")
-
-    minvar_w, maxsharpe_w = compute_markowitz_weights(in_sample_simple_returns, allow_short=False)
+    minvar_w, maxsharpe_w = compute_markowitz_weights(in_sample_simple_returns[components], allow_short=False)
+    minvar_w = restrict_weights_to_universe(minvar_w, components, "markowitz_minvar")
+    maxsharpe_w = restrict_weights_to_universe(maxsharpe_w, components, "markowitz_maxsharpe")
 
     validate_portfolio_weights(minvar_w, "markowitz_minvar")
     validate_portfolio_weights(maxsharpe_w, "markowitz_maxsharpe")
 
-    in_sample_data["markowitz_minvar"] = compute_weighted_portfolio(
-        in_sample_data, minvar_w, "markowitz_minvar"
-    )
-    in_sample_data["markowitz_maxsharpe"] = compute_weighted_portfolio(
-        in_sample_data, maxsharpe_w, "markowitz_maxsharpe"
-    )
+    in_sample_data["markowitz_minvar"] = compute_weighted_portfolio(in_sample_data, minvar_w, "markowitz_minvar")
+    in_sample_data["markowitz_maxsharpe"] = compute_weighted_portfolio(in_sample_data, maxsharpe_w, "markowitz_maxsharpe")
 
     isolated, independence = degeneracy_ordering(in_sample_graph, components)
-    selected_stocks_deg = isolated + independence
-    in_sample_data["degeneracy"] = compute_equal_weighted_portfolio(
-        in_sample_data, selected_stocks_deg, "degeneracy"
-    )
+    selected_stocks_deg = [s for s in (isolated + independence) if s in components]
+    in_sample_data["degeneracy"] = compute_equal_weighted_portfolio(in_sample_data, selected_stocks_deg, "degeneracy")
 
     fig_deg = plotly_network(
         in_sample_graph,
@@ -163,13 +183,10 @@ if __name__ == "__main__":
     )
     save_plotly(fig_deg, f"network_degeneracy_{IN_SAMPLE_START}_{IN_SAMPLE_END}.html")
 
-    eigen_w_central = eigenvector_centrality_weights(
-        in_sample_graph, components, inverse=True
-    )
+    eigen_w_central = eigenvector_centrality_weights(in_sample_graph, components, inverse=True)
+    eigen_w_central = restrict_weights_to_universe(eigen_w_central, components, "eigen_central")
     validate_portfolio_weights(eigen_w_central, "eigen_central")
-    in_sample_data["eigen_central"] = compute_weighted_portfolio(
-        in_sample_data, eigen_w_central, "eigen_central"
-    )
+    in_sample_data["eigen_central"] = compute_weighted_portfolio(in_sample_data, eigen_w_central, "eigen_central")
 
     try:
         ec_plot_dict = nx.eigenvector_centrality(in_sample_graph, weight="weight", max_iter=2000)
@@ -194,10 +211,10 @@ if __name__ == "__main__":
         in_sample_correlation, method="average", max_clusters=HIER_MAX_CLUSTERS
     )
     cluster_w = cluster_equal_weights(cluster_labels)
+    cluster_w = restrict_weights_to_universe(cluster_w, components, "cluster_equal")
     validate_portfolio_weights(cluster_w, "cluster_equal")
-    in_sample_data["cluster_equal"] = compute_weighted_portfolio(
-        in_sample_data, cluster_w, "cluster_equal"
-    )
+    in_sample_data["cluster_equal"] = compute_weighted_portfolio(in_sample_data, cluster_w, "cluster_equal")
+
     save_dendrogram(
         Z_cluster,
         list(in_sample_correlation.index),
@@ -212,10 +229,9 @@ if __name__ == "__main__":
         linkage_method="ward",
         use_distance_of_distance=True
     )
+    herc_w = restrict_weights_to_universe(herc_w, components, "herc")
     validate_portfolio_weights(herc_w, "herc")
-    in_sample_data["herc"] = compute_weighted_portfolio(
-        in_sample_data, herc_w, "herc"
-    )
+    in_sample_data["herc"] = compute_weighted_portfolio(in_sample_data, herc_w, "herc")
 
     std_dev = np.sqrt(np.diag(in_sample_cov.values))
     denom = np.outer(std_dev, std_dev)
@@ -236,9 +252,7 @@ if __name__ == "__main__":
         f"dendrogram_herc_{IN_SAMPLE_START}_{IN_SAMPLE_END}.png"
     )
 
-    stats = compute_annualized_return_vol(
-        in_sample_returns, periods_per_year=PERIODS_PER_YEAR
-    )
+    stats = compute_annualized_return_vol(in_sample_returns, periods_per_year=PERIODS_PER_YEAR)
 
     if KMEANS_REMOVE_OUTLIERS:
         stats_for_kmeans, _ = remove_outliers_zscore(stats, ["Return", "Volatility"], z=KMEANS_OUTLIER_Z)
@@ -256,10 +270,9 @@ if __name__ == "__main__":
         top_clusters=2,
         min_cluster_size=4
     )
+    kmeans_w = restrict_weights_to_universe(kmeans_w, components, "kmeans")
     validate_portfolio_weights(kmeans_w, "kmeans")
-    in_sample_data["kmeans"] = compute_weighted_portfolio(
-        in_sample_data, kmeans_w, "kmeans"
-    )
+    in_sample_data["kmeans"] = compute_weighted_portfolio(in_sample_data, kmeans_w, "kmeans")
 
     fig_km_scatter = plot_kmeans_scatter(
         stats_with_clusters,
@@ -293,16 +306,10 @@ if __name__ == "__main__":
     label_map = {p: style_map[p][2] for p in portfolios}
     color_map = {p: style_map[p][0] for p in portfolios}
 
-    metrics_is = metrics_table_from_values(
-        in_sample_data, portfolios, bench_name="FTSE100"
-    )
+    metrics_is = metrics_table_from_values(in_sample_data, portfolios, bench_name="FTSE100")
     metrics_is.to_csv(OUTPUT_DIR / f"metrics_in_sample_{IN_SAMPLE_START}_{IN_SAMPLE_END}.csv")
 
-    fig_cum_is = plot_cumulative_returns(
-        in_sample_data,
-        portfolios,
-        style_map
-    )
+    fig_cum_is = plot_cumulative_returns(in_sample_data, portfolios, style_map)
     save_plotly(fig_cum_is, f"cumulative_in_sample_{IN_SAMPLE_START}_{IN_SAMPLE_END}.html")
 
     fig_mv_is = plot_mean_variance_scatter(
@@ -319,12 +326,7 @@ if __name__ == "__main__":
 
     print(f"\n--- RUNNING OUT-OF-SAMPLE ANALYSIS ({OUT_SAMPLE_START}-{OUT_SAMPLE_END}) ---")
 
-    out_sample_raw = metadata[OUT_SAMPLE_START:OUT_SAMPLE_END].copy()
-
-    out_sample_returns, out_sample_correlation, out_sample_prices = preprocess_returns(
-        out_sample_raw, components, min_data_availability=MIN_DATA_AVAILABILITY
-    )
-
+    out_sample_prices = out_prices_all.loc[test_start_date:, components].copy()
     out_sample_data = out_sample_prices.copy()
     out_sample_data["FTSE100"] = metadata.loc[out_sample_data.index, "FTSE100"].ffill()
 
@@ -336,19 +338,13 @@ if __name__ == "__main__":
     out_sample_data["herc"] = compute_weighted_portfolio(out_sample_data, herc_w, "herc")
     out_sample_data["kmeans"] = compute_weighted_portfolio(out_sample_data, kmeans_w, "kmeans")
 
-    metrics_os = metrics_table_from_values(
-        out_sample_data, portfolios, bench_name="FTSE100"
-    )
+    metrics_os = metrics_table_from_values(out_sample_data, portfolios, bench_name="FTSE100")
     metrics_os.to_csv(OUTPUT_DIR / f"metrics_out_sample_{OUT_SAMPLE_START}_{OUT_SAMPLE_END}.csv")
 
     print("\n--- OUT-OF-SAMPLE METRICS (Test Phase) ---")
     print(metrics_os)
 
-    fig_cum_os = plot_cumulative_returns(
-        out_sample_data,
-        portfolios,
-        style_map
-    )
+    fig_cum_os = plot_cumulative_returns(out_sample_data, portfolios, style_map)
     save_plotly(fig_cum_os, f"cumulative_out_sample_{OUT_SAMPLE_START}_{OUT_SAMPLE_END}.html")
 
     fig_mv_os = plot_mean_variance_scatter(
