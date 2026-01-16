@@ -8,6 +8,7 @@ from scipy.cluster.hierarchy import linkage, fcluster, dendrogram
 from scipy.spatial.distance import squareform
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
+import plotly.express as px
 
 from config import OUTPUT_DIR, KMEANS_RANDOM_STATE
 
@@ -249,22 +250,41 @@ def build_kmeans_weights(
 
 
 def plot_kmeans_scatter(stats_with_clusters: pd.DataFrame, picked_clusters: List[int], title: str):
-    import plotly.express as px
 
     dfp = stats_with_clusters.reset_index().rename(columns={"index": "Ticker"})
-    dfp["Picked"] = dfp["Cluster"].astype(int).isin([int(c) for c in picked_clusters])
+    dfp["Cluster"] = dfp["Cluster"].astype(int)
 
+    # Base scatter: ONLY the 4 clusters (no Picked=True/False dimension => no True/False legend)
     fig = px.scatter(
         dfp,
         x="Return",
         y="Volatility",
         color="Cluster",
-        symbol="Picked",
         hover_data=["Ticker"],
         title=title,
         width=980,
         height=540,
     )
+    if picked_clusters is not None and len(picked_clusters) > 0:
+        picked_set = set(int(c) for c in picked_clusters)
+        df_pick = dfp[dfp["Cluster"].isin(picked_set)].copy()
+
+        if len(df_pick) > 0:
+            fig.add_scatter(
+                x=df_pick["Return"],
+                y=df_pick["Volatility"],
+                mode="markers",
+                marker=dict(
+                    symbol="circle-open",
+                    size=14,
+                    line=dict(width=2, color="rgba(0,0,0,0.85)"),
+                ),
+                hovertext=df_pick["Ticker"],
+                hovertemplate="<b>%{hovertext}</b><extra></extra>",
+                showlegend=False,
+                name="Picked",
+            )
+
     fig.update_layout(
         paper_bgcolor="white",
         plot_bgcolor="white",
