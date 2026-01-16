@@ -1,4 +1,4 @@
-from typing import Dict, Tuple, List
+from typing import Dict, Tuple, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -61,7 +61,7 @@ def plot_cumulative_returns(
     portfolio_data: pd.DataFrame,
     portfolios: List[str],
     style_map: Dict[str, Tuple[str, str, str]],
-    title: str,
+    title: Optional[str] = None,   # optional now
 ) -> go.Figure:
     fig = go.Figure()
     dash_map = {
@@ -93,15 +93,26 @@ def plot_cumulative_returns(
         )
 
     fig.update_layout(
-        title=title,
+        title=(title or None),  # None = no title
         width=1100,
         height=520,
-        margin=dict(l=40, r=20, t=60, b=40),
+        margin=dict(l=45, r=20, t=25, b=45),
         paper_bgcolor="white",
         plot_bgcolor="white",
         xaxis=dict(showgrid=True, gridcolor="rgba(0,0,0,0.08)", title="Date"),
         yaxis=dict(showgrid=True, gridcolor="rgba(0,0,0,0.08)", title="Cumulative Return (%)"),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        # Put legend INSIDE the plot so it never overlaps a title
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=0.99,          # inside plot area
+            xanchor="left",
+            x=0.01,
+            bgcolor="rgba(255,255,255,0.75)",
+            bordercolor="rgba(0,0,0,0.15)",
+            borderwidth=1,
+            font=dict(size=12),
+        ),
         hovermode="x unified",
     )
     return fig

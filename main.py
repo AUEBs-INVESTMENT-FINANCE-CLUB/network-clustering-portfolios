@@ -269,8 +269,7 @@ if __name__ == "__main__":
     fig_cum_is = plot_cumulative_returns(
         in_sample_data,
         portfolios,
-        style_map,
-        f"Cumulative Returns (%) ({IN_SAMPLE_START}-{IN_SAMPLE_END})"
+        style_map
     )
     save_plotly(fig_cum_is, f"cumulative_in_sample_{IN_SAMPLE_START}_{IN_SAMPLE_END}.html")
 
@@ -316,8 +315,7 @@ if __name__ == "__main__":
     fig_cum_os = plot_cumulative_returns(
         out_sample_data,
         portfolios,
-        style_map,
-        f"Cumulative Returns (%) ({OUT_SAMPLE_START}-{OUT_SAMPLE_END})"
+        style_map
     )
     save_plotly(fig_cum_os, f"cumulative_out_sample_{OUT_SAMPLE_START}_{OUT_SAMPLE_END}.html")
 
