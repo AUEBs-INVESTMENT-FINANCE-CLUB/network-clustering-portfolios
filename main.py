@@ -3,6 +3,7 @@ import pandas as pd
 import networkx as nx
 from scipy.cluster.hierarchy import linkage
 from scipy.spatial.distance import squareform
+from scipy.optimize import minimize
 
 from config import (
     IN_SAMPLE_START, IN_SAMPLE_END, OUT_SAMPLE_START, OUT_SAMPLE_END,
@@ -35,33 +36,62 @@ from metrics import metrics_table_from_values
 
 def compute_markowitz_weights(returns: pd.DataFrame, allow_short: bool = False):
     returns = returns.dropna(axis=1, how="all")
-    mu = returns.mean()
-    Sigma = returns.cov()
+    if returns.shape[1] == 0:
+        raise ValueError("No assets available for Markowitz after cleaning.")
 
-    Sigma_inv = np.linalg.pinv(Sigma.values)
-    ones = np.ones(len(mu))
+    mu = returns.mean().values
+    Sigma = returns.cov().values
+    n = len(mu)
 
-    w_minvar = Sigma_inv @ ones
-    denom_minvar = ones @ w_minvar
-    if denom_minvar != 0:
-        w_minvar = w_minvar / denom_minvar
+    Sigma = 0.5 * (Sigma + Sigma.T)
+    Sigma = Sigma + 1e-10 * np.eye(n)
 
-    w_maxsharpe = Sigma_inv @ mu.values
-    denom_maxsharpe = w_maxsharpe.sum()
-    if denom_maxsharpe != 0:
-        w_maxsharpe = w_maxsharpe / denom_maxsharpe
+    if allow_short:
+        bounds = [(-1.0, 1.0)] * n
+    else:
+        bounds = [(0.0, 1.0)] * n
+
+    cons = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
+    w0 = np.ones(n) / n
+
+    def obj_minvar(w):
+        return float(w @ Sigma @ w)
+
+    res_min = minimize(
+        obj_minvar,
+        w0,
+        method="SLSQP",
+        bounds=bounds,
+        constraints=cons,
+        options={"maxiter": 4000, "ftol": 1e-12},
+    )
+    w_minvar = res_min.x if res_min.success else w0
+
+    def obj_neg_sharpe(w):
+        ret = float(mu @ w)
+        vol2 = float(w @ Sigma @ w)
+        vol = float(np.sqrt(max(vol2, 1e-16)))
+        return -(ret / vol)
+
+    res_ms = minimize(
+        obj_neg_sharpe,
+        w0,
+        method="SLSQP",
+        bounds=bounds,
+        constraints=cons,
+        options={"maxiter": 4000, "ftol": 1e-12},
+    )
+    w_maxsharpe = res_ms.x if res_ms.success else w0
 
     if not allow_short:
         w_minvar = np.maximum(w_minvar, 0.0)
-        if w_minvar.sum() > 0:
-            w_minvar = w_minvar / w_minvar.sum()
-
         w_maxsharpe = np.maximum(w_maxsharpe, 0.0)
-        if w_maxsharpe.sum() > 0:
-            w_maxsharpe = w_maxsharpe / w_maxsharpe.sum()
 
-    w_minvar = pd.Series(w_minvar, index=mu.index, name="markowitz_minvar")
-    w_maxsharpe = pd.Series(w_maxsharpe, index=mu.index, name="markowitz_maxsharpe")
+    w_minvar = w_minvar / (w_minvar.sum() if w_minvar.sum() != 0 else 1.0)
+    w_maxsharpe = w_maxsharpe / (w_maxsharpe.sum() if w_maxsharpe.sum() != 0 else 1.0)
+
+    w_minvar = pd.Series(w_minvar, index=returns.columns, name="markowitz_minvar")
+    w_maxsharpe = pd.Series(w_maxsharpe, index=returns.columns, name="markowitz_maxsharpe")
     return w_minvar, w_maxsharpe
 
 
@@ -100,7 +130,11 @@ if __name__ == "__main__":
         components, in_sample_correlation
     )
 
-    minvar_w, maxsharpe_w = compute_markowitz_weights(in_sample_returns, allow_short=False)
+    in_sample_simple_returns = in_sample_prices[components].pct_change().dropna(how="all")
+    in_sample_simple_returns = in_sample_simple_returns.dropna(how="any")
+
+    minvar_w, maxsharpe_w = compute_markowitz_weights(in_sample_simple_returns, allow_short=False)
+
     validate_portfolio_weights(minvar_w, "markowitz_minvar")
     validate_portfolio_weights(maxsharpe_w, "markowitz_maxsharpe")
 
@@ -210,8 +244,6 @@ if __name__ == "__main__":
         stats_for_kmeans, _ = remove_outliers_zscore(stats, ["Return", "Volatility"], z=KMEANS_OUTLIER_Z)
     else:
         stats_for_kmeans = stats
-
-    # ELBOW REMOVED (function + call removed)
 
     kmeans_labels, stats_with_clusters, _, _ = kmeans_cluster_retvol(
         stats_for_kmeans, k=KMEANS_K, scale=KMEANS_SCALE_FEATURES
