@@ -1,5 +1,4 @@
 from typing import Tuple, List
-
 import numpy as np
 import pandas as pd
 
@@ -32,25 +31,38 @@ def preprocess_returns(
         raise ValueError("No components found in data.columns")
 
     prices = data[available_components].copy()
+    prices = prices.sort_index()
+
     prices = prices.dropna(how="all")
-
-    non_null_count = prices.notna().sum(axis=1)
-    total_stocks = len(available_components)
-    available_pct = non_null_count / total_stocks
-    valid_dates = available_pct >= min_data_availability
-
-    prices = prices.loc[valid_dates].copy()
     if len(prices) == 0:
-        raise ValueError(f"No dates have at least {min_data_availability*100:.0f}% data availability")
+        raise ValueError("Price panel is empty after dropping all-NaN rows.")
 
-    prices = prices.sort_index().ffill()
+    start_date = prices.index[0]
 
-    all_nan_cols = prices.columns[prices.isna().all(axis=0)].tolist()
-    if all_nan_cols:
-        prices = prices.drop(columns=all_nan_cols)
+    col_coverage = prices.notna().mean(axis=0)
+    keep = col_coverage >= float(min_data_availability)
 
-    logret = np.log(prices).diff().dropna(how="all")
-    logret = logret.dropna(how="any")
+    keep &= prices.loc[start_date].notna()
+
+    kept_cols = keep[keep].index.tolist()
+    if len(kept_cols) == 0:
+        raise ValueError(
+            "No stocks remain after column filtering. "
+            "Lower MIN_DATA_AVAILABILITY or check if prices exist on the first in-sample date."
+        )
+
+    prices = prices[kept_cols].copy()
+
+    prices = prices.ffill()
+
+    prices = prices.dropna(axis=1, how="any")
+    if prices.shape[1] == 0:
+        raise ValueError(
+            "All stocks removed after forward-fill cleanup. "
+            "This usually means leading NaNs at the in-sample start date."
+        )
+
+    logret = np.log(prices).diff().dropna(how="any")
 
     correlation = logret.corr()
     return logret, correlation, prices
