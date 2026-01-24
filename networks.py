@@ -18,8 +18,18 @@ def create_graph(components: List[str], correlation: pd.DataFrame, threshold: fl
             corr_val = correlation.loc[stock_i, stock_j]
             if corr_val > threshold:
                 graph.add_edge(stock_i, stock_j, weight=corr_val)
-
-    layout = nx.spring_layout(graph, seed=42) if len(graph.nodes) > 0 else {}
+    
+    if len(graph.nodes) > 0:
+        layout = nx.spring_layout(
+            graph, 
+            k=2.5,            
+            iterations=100,     
+            weight=None,        
+            seed=42
+        )
+    else:
+        layout = {}
+        
     return graph, layout
 
 
