@@ -40,6 +40,65 @@ def restrict_weights_to_universe(weights: pd.Series, universe: list, name: str) 
     return w
 
 
+def save_weights_csv(w: pd.Series, name: str) -> None:
+    w = w.reindex(w.index).fillna(0.0).astype(float)
+    w = w / w.sum() if float(w.sum()) != 0.0 else w
+    w = w.sort_values(ascending=False)
+    df = pd.DataFrame({"Weight": w, "Weight_%": 100.0 * w})
+    df.to_csv(OUTPUT_DIR / f"weights_{name}.csv")
+
+
+def build_appendix_holdings_table(
+    weights_map: dict[str, pd.Series],
+    top_n_eigen_herc: int = 15
+) -> pd.DataFrame:
+    picked = set()
+
+    if "degeneracy" in weights_map:
+        picked |= set(weights_map["degeneracy"][weights_map["degeneracy"] > 0].index)
+
+    if "kmeans" in weights_map:
+        picked |= set(weights_map["kmeans"][weights_map["kmeans"] > 0].index)
+
+    if "eigen_central" in weights_map:
+        picked |= set(weights_map["eigen_central"].sort_values(ascending=False).head(top_n_eigen_herc).index)
+
+    if "herc" in weights_map:
+        picked |= set(weights_map["herc"].sort_values(ascending=False).head(top_n_eigen_herc).index)
+
+    picked = sorted(picked)
+
+    pretty_cols = {
+        "degeneracy": "Degeneracy (%)",
+        "eigen_central": "Eigen tilt (%)",
+        "cluster_equal": "Cluster eq (%)",
+        "kmeans": "K-means (%)",
+        "herc": "HERC (%)",
+    }
+
+    df = pd.DataFrame(index=picked)
+    df.index.name = "Ticker"
+
+    for key, w in weights_map.items():
+        if key not in pretty_cols:
+            continue
+        df[pretty_cols[key]] = 100.0 * w.reindex(picked).fillna(0.0)
+
+    df = df.loc[(df.abs().sum(axis=1) > 0)].copy()
+    return df
+
+
+def save_appendix_table_files(df: pd.DataFrame, base_name: str = "appendix_weights_table") -> None:
+    df.to_csv(OUTPUT_DIR / f"{base_name}.csv")
+    latex = df.to_latex(
+        escape=True,
+        float_format="%.3f",
+        column_format="l" + "r" * df.shape[1]
+    )
+    with open(OUTPUT_DIR / f"{base_name}.tex", "w", encoding="utf-8") as f:
+        f.write(latex)
+
+
 if __name__ == "__main__":
     metadata, all_components = load_ftse100_data("ftse_stock_prices.csv")
     if metadata.empty:
@@ -95,7 +154,12 @@ if __name__ == "__main__":
 
     isolated, independence = degeneracy_ordering(in_sample_graph, components)
     selected_stocks_deg = [s for s in (isolated + independence) if s in components]
-    in_sample_data["degeneracy"] = compute_equal_weighted_portfolio(in_sample_data, selected_stocks_deg, "degeneracy")
+    deg_w = pd.Series(0.0, index=components, dtype=float)
+    if len(selected_stocks_deg) > 0:
+        deg_w.loc[selected_stocks_deg] = 1.0 / len(selected_stocks_deg)
+    deg_w = restrict_weights_to_universe(deg_w, components, "degeneracy")
+    validate_portfolio_weights(deg_w, "degeneracy")
+    in_sample_data["degeneracy"] = compute_weighted_portfolio(in_sample_data, deg_w, "degeneracy")
 
     fig_deg = plotly_network(
         in_sample_graph,
@@ -228,7 +292,7 @@ if __name__ == "__main__":
     label_map = {p: style_map[p][2] for p in portfolios}
     color_map = {p: style_map[p][0] for p in portfolios}
 
-    metrics_is = metrics_table_from_values(in_sample_data, portfolios, bench_name="FTSE100")
+    metrics_is = metrics_table_from_values(in_sample_data, portfolios, bench_name="FTSE100", periods_per_year=PERIODS_PER_YEAR)
     metrics_is.to_csv(OUTPUT_DIR / f"metrics_in_sample_{IN_SAMPLE_START}_{IN_SAMPLE_END}.csv")
 
     fig_cum_is = plot_cumulative_returns(in_sample_data, portfolios, style_map)
@@ -252,13 +316,13 @@ if __name__ == "__main__":
     out_sample_data = out_sample_prices.copy()
     out_sample_data["FTSE100"] = metadata.loc[out_sample_data.index, "FTSE100"].ffill()
 
-    out_sample_data["degeneracy"] = compute_equal_weighted_portfolio(out_sample_data, selected_stocks_deg, "degeneracy")
+    out_sample_data["degeneracy"] = compute_weighted_portfolio(out_sample_data, deg_w, "degeneracy")
     out_sample_data["eigen_central"] = compute_weighted_portfolio(out_sample_data, eigen_w_central, "eigen_central")
     out_sample_data["cluster_equal"] = compute_weighted_portfolio(out_sample_data, cluster_w, "cluster_equal")
     out_sample_data["herc"] = compute_weighted_portfolio(out_sample_data, herc_w, "herc")
     out_sample_data["kmeans"] = compute_weighted_portfolio(out_sample_data, kmeans_w, "kmeans")
 
-    metrics_os = metrics_table_from_values(out_sample_data, portfolios, bench_name="FTSE100")
+    metrics_os = metrics_table_from_values(out_sample_data, portfolios, bench_name="FTSE100", periods_per_year=PERIODS_PER_YEAR)
     metrics_os.to_csv(OUTPUT_DIR / f"metrics_out_sample_{OUT_SAMPLE_START}_{OUT_SAMPLE_END}.csv")
 
     print("\n--- OUT-OF-SAMPLE METRICS (Test Phase) ---")
@@ -275,5 +339,19 @@ if __name__ == "__main__":
         f"Mean-Variance Analysis ({OUT_SAMPLE_START}-{OUT_SAMPLE_END})"
     )
     save_plotly(fig_mv_os, f"mean_variance_out_sample_{OUT_SAMPLE_START}_{OUT_SAMPLE_END}.html")
+
+    weights_map = {
+        "degeneracy": deg_w,
+        "eigen_central": eigen_w_central,
+        "cluster_equal": cluster_w,
+        "kmeans": kmeans_w,
+        "herc": herc_w,
+    }
+
+    for name, w in weights_map.items():
+        save_weights_csv(w, name)
+
+    appendix_df = build_appendix_holdings_table(weights_map, top_n_eigen_herc=15)
+    save_appendix_table_files(appendix_df, base_name="appendix_weights_table")
 
     print(f"\nCompleted successfully. All outputs saved to: {OUTPUT_DIR.resolve()}")
