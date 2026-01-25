@@ -3,7 +3,6 @@ import pandas as pd
 import networkx as nx
 from scipy.cluster.hierarchy import linkage
 from scipy.spatial.distance import squareform
-from scipy.optimize import minimize
 
 from config import (
     IN_SAMPLE_START, IN_SAMPLE_END, OUT_SAMPLE_START, OUT_SAMPLE_END,
@@ -41,63 +40,6 @@ def restrict_weights_to_universe(weights: pd.Series, universe: list, name: str) 
     return w
 
 
-def compute_markowitz_weights(returns: pd.DataFrame, allow_short: bool = False):
-    returns = returns.dropna(axis=1, how="all")
-    if returns.shape[1] == 0:
-        raise ValueError("No assets available for Markowitz after cleaning.")
-
-    mu = returns.mean().values
-    Sigma = returns.cov().values
-    n = len(mu)
-
-    Sigma = 0.5 * (Sigma + Sigma.T)
-    Sigma = Sigma + 1e-10 * np.eye(n)
-
-    bounds = [(-1.0, 1.0)] * n if allow_short else [(0.0, 1.0)] * n
-    cons = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
-    w0 = np.ones(n) / n
-
-    def obj_minvar(w):
-        return float(w @ Sigma @ w)
-
-    res_min = minimize(
-        obj_minvar,
-        w0,
-        method="SLSQP",
-        bounds=bounds,
-        constraints=cons,
-        options={"maxiter": 4000, "ftol": 1e-12},
-    )
-    w_minvar = res_min.x if res_min.success else w0
-
-    def obj_neg_sharpe(w):
-        ret = float(mu @ w)
-        vol2 = float(w @ Sigma @ w)
-        vol = float(np.sqrt(max(vol2, 1e-16)))
-        return -(ret / vol)
-
-    res_ms = minimize(
-        obj_neg_sharpe,
-        w0,
-        method="SLSQP",
-        bounds=bounds,
-        constraints=cons,
-        options={"maxiter": 4000, "ftol": 1e-12},
-    )
-    w_maxsharpe = res_ms.x if res_ms.success else w0
-
-    if not allow_short:
-        w_minvar = np.maximum(w_minvar, 0.0)
-        w_maxsharpe = np.maximum(w_maxsharpe, 0.0)
-
-    w_minvar = w_minvar / (w_minvar.sum() if w_minvar.sum() != 0 else 1.0)
-    w_maxsharpe = w_maxsharpe / (w_maxsharpe.sum() if w_maxsharpe.sum() != 0 else 1.0)
-
-    w_minvar = pd.Series(w_minvar, index=returns.columns, name="markowitz_minvar")
-    w_maxsharpe = pd.Series(w_maxsharpe, index=returns.columns, name="markowitz_maxsharpe")
-    return w_minvar, w_maxsharpe
-
-
 if __name__ == "__main__":
     metadata, all_components = load_ftse100_data("ftse_stock_prices.csv")
     if metadata.empty:
@@ -121,7 +63,7 @@ if __name__ == "__main__":
 
     in_sample_raw = metadata.loc[IN_SAMPLE_START:IN_SAMPLE_END].copy()
     in_sample_returns, in_sample_correlation, in_sample_prices = preprocess_returns(
-    in_sample_raw, universe_start, min_data_availability=MIN_DATA_AVAILABILITY
+        in_sample_raw, universe_start, min_data_availability=MIN_DATA_AVAILABILITY
     )
 
     components = list(in_sample_prices.columns)
@@ -149,23 +91,7 @@ if __name__ == "__main__":
     threshold = np.quantile(upper, NETWORK_THRESHOLD_QUANTILE)
 
     in_sample_graph, in_sample_layout = create_graph(components, in_sample_correlation, threshold)
-    in_sample_full_graph = create_full_correlation_graph(components, in_sample_correlation)
-
-    in_sample_simple_returns = pd.DataFrame(
-        np.expm1(in_sample_returns.values),
-        index=in_sample_returns.index,
-        columns=in_sample_returns.columns
-    )
-
-    minvar_w, maxsharpe_w = compute_markowitz_weights(in_sample_simple_returns[components], allow_short=False)
-    minvar_w = restrict_weights_to_universe(minvar_w, components, "markowitz_minvar")
-    maxsharpe_w = restrict_weights_to_universe(maxsharpe_w, components, "markowitz_maxsharpe")
-
-    validate_portfolio_weights(minvar_w, "markowitz_minvar")
-    validate_portfolio_weights(maxsharpe_w, "markowitz_maxsharpe")
-
-    in_sample_data["markowitz_minvar"] = compute_weighted_portfolio(in_sample_data, minvar_w, "markowitz_minvar")
-    in_sample_data["markowitz_maxsharpe"] = compute_weighted_portfolio(in_sample_data, maxsharpe_w, "markowitz_maxsharpe")
+    _ = create_full_correlation_graph(components, in_sample_correlation)
 
     isolated, independence = degeneracy_ordering(in_sample_graph, components)
     selected_stocks_deg = [s for s in (isolated + independence) if s in components]
@@ -283,8 +209,6 @@ if __name__ == "__main__":
 
     portfolios = [
         "FTSE100",
-        "markowitz_minvar",
-        "markowitz_maxsharpe",
         "degeneracy",
         "eigen_central",
         "cluster_equal",
@@ -294,8 +218,6 @@ if __name__ == "__main__":
 
     style_map = {
         "FTSE100": ("grey", "-", "FTSE 100 Index"),
-        "markowitz_minvar": ("blue", "-", "Markowitz Min-Var"),
-        "markowitz_maxsharpe": ("purple", "--", "Markowitz Max-Sharpe"),
         "degeneracy": ("green", "-", "Degeneracy Selection"),
         "eigen_central": ("orange", "-", "Eigen Centrality (Inverse)"),
         "cluster_equal": ("magenta", ":", "Cluster Equal Weight"),
@@ -330,8 +252,6 @@ if __name__ == "__main__":
     out_sample_data = out_sample_prices.copy()
     out_sample_data["FTSE100"] = metadata.loc[out_sample_data.index, "FTSE100"].ffill()
 
-    out_sample_data["markowitz_minvar"] = compute_weighted_portfolio(out_sample_data, minvar_w, "markowitz_minvar")
-    out_sample_data["markowitz_maxsharpe"] = compute_weighted_portfolio(out_sample_data, maxsharpe_w, "markowitz_maxsharpe")
     out_sample_data["degeneracy"] = compute_equal_weighted_portfolio(out_sample_data, selected_stocks_deg, "degeneracy")
     out_sample_data["eigen_central"] = compute_weighted_portfolio(out_sample_data, eigen_w_central, "eigen_central")
     out_sample_data["cluster_equal"] = compute_weighted_portfolio(out_sample_data, cluster_w, "cluster_equal")

@@ -61,7 +61,7 @@ def plot_cumulative_returns(
     portfolio_data: pd.DataFrame,
     portfolios: List[str],
     style_map: Dict[str, Tuple[str, str, str]],
-    title: Optional[str] = None,   # optional now
+    title: Optional[str] = None,
 ) -> go.Figure:
     fig = go.Figure()
     dash_map = {
@@ -93,7 +93,7 @@ def plot_cumulative_returns(
         )
 
     fig.update_layout(
-        title=(title or None),  # None = no title
+        title=(title or None),
         width=1100,
         height=520,
         margin=dict(l=45, r=20, t=25, b=45),
@@ -101,11 +101,10 @@ def plot_cumulative_returns(
         plot_bgcolor="white",
         xaxis=dict(showgrid=True, gridcolor="rgba(0,0,0,0.08)", title="Date"),
         yaxis=dict(showgrid=True, gridcolor="rgba(0,0,0,0.08)", title="Cumulative Return (%)"),
-        # Put legend INSIDE the plot so it never overlaps a title
         legend=dict(
             orientation="h",
             yanchor="top",
-            y=0.99,          # inside plot area
+            y=0.99,
             xanchor="left",
             x=0.01,
             bgcolor="rgba(255,255,255,0.75)",
@@ -133,7 +132,8 @@ def plot_mean_variance_scatter(
         values = portfolio_data[portfolio].dropna()
         if len(values) < 2:
             continue
-        r = np.log(values).diff().dropna()
+
+        r = values.pct_change().dropna()
         if len(r) == 0:
             continue
 
