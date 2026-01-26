@@ -36,19 +36,69 @@ def corr_distance_of_distance_matrix(correlation: pd.DataFrame) -> np.ndarray:
 
 
 def hierarchical_clusters_from_corr(
-    correlation: pd.DataFrame, method: str = "average", max_clusters: int = 10
+    correlation: pd.DataFrame,
+    method: str = "average",
+    max_clusters: int = 15,
+    min_cluster_size: int | None = None
 ) -> Tuple[pd.Series, np.ndarray]:
     corr = correlation.copy().fillna(0.0)
     np.fill_diagonal(corr.values, 1.0)
     corr = corr.clip(-1.0, 1.0)
 
+    n_items = corr.shape[0]
+    if n_items == 0:
+        return pd.Series(dtype=int, name="cluster"), np.empty((0, 4))
+    if n_items == 1:
+        labels = pd.Series([1], index=correlation.index, name="cluster")
+        return labels, np.empty((0, 4))
+
+    
     dist = np.sqrt(np.maximum(0.0, 0.5 * (1 - corr.values)))
     dist = np.nan_to_num(dist, nan=1.0, posinf=1.0, neginf=1.0)
-    condensed = squareform(dist, checks=False)
+    np.fill_diagonal(dist, 0.0)
 
+    condensed = squareform(dist, checks=False)
     Z = linkage(condensed, method=method)
-    labels = fcluster(Z, max_clusters, criterion="maxclust")
-    labels = pd.Series(labels, index=correlation.index, name="cluster")
+
+    k = int(min(max_clusters, n_items))
+    lab = fcluster(Z, k, criterion="maxclust").astype(int)
+
+    
+    if min_cluster_size is not None and int(min_cluster_size) > 1:
+        min_sz = int(min_cluster_size)
+
+        while True:
+            counts = pd.Series(lab).value_counts()
+            small = counts[counts < min_sz]
+            if small.empty:
+                break
+
+            
+            c_small = int(small.index[0])
+            idx_small = np.where(lab == c_small)[0]
+
+            
+            candidates = [int(c) for c in counts.index if int(c) != c_small]
+            if len(candidates) == 0:
+                break
+
+            
+            best_c = None
+            best_d = None
+            for c in candidates:
+                idx_c = np.where(lab == int(c))[0]
+                dbar = float(dist[np.ix_(idx_small, idx_c)].mean())
+                if best_d is None or dbar < best_d:
+                    best_d = dbar
+                    best_c = int(c)
+
+            lab[idx_small] = int(best_c)
+
+        
+        _, new_lab = np.unique(lab, return_inverse=True)
+        lab = (new_lab + 1).astype(int)
+
+    labels = pd.Series(lab, index=correlation.index, name="cluster")
     return labels, Z
 
 
