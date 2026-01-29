@@ -1,0 +1,358 @@
+\documentclass[%
+ reprint,
+ amsmath,amssymb,
+ aps,
+]{revtex4-2}
+
+\usepackage{graphicx}
+\usepackage{dcolumn}
+\usepackage{bm}
+\usepackage{hyperref}
+\usepackage{placeins}
+\usepackage{booktabs}
+\graphicspath{{outputs/}}
+
+\begin{document}
+
+\title{Network and Clustering Portfolios on FTSE 100}
+
+\author{Nikolaos Bellos}
+\affiliation{Member of AUEB Students' Investment and Finance Club}
+
+\begin{abstract}
+We study portfolio construction on FTSE 100 equities using correlation structure as the main input. Rather than forecasting returns, we compare simple allocation rules that aim to diversify via networks and clustering. We consider five approaches: a sparse correlation network with a selection rule based on graph degeneracy (k-core), an inverse eigenvector centrality portfolio that reduces exposure to the most connected stocks, hierarchical clustering with equal allocation across clusters, hierarchical risk allocation (HERC), and K-means clustering on estimated return and volatility. Weights are estimated on a training period and held fixed in a separate test period. Performance is compared to the FTSE 100 using annualized mean return, volatility, Sharpe ratio with zero risk-free rate, and diversification ratio (where applicable).
+\end{abstract}
+
+\maketitle
+
+\section{\label{sec:design}Design and setup}
+
+We use a split-sample design. Portfolio weights are estimated on an initial training window and then kept fixed over a later test window. We do not rebalance in the test phase, so the comparison reflects how each diversification rule behaves when exposures are held constant.
+
+All portfolios are evaluated on the same set of stocks. We retain only stocks with a valid price series over the full horizon used in the study, so the investable universe is unchanged across training and test periods. Differences in outcomes therefore stem from the allocation rules rather than from differing constituents.
+
+All computations use daily closing prices. Annualization follows a 252 trading-day convention. The evaluation window includes stressed periods such as Brexit-related uncertainty and the COVID-19 shock, which provides a natural stress test for dependence-based diversification under a strict buy-and-hold design.
+
+\section{\label{sec:data}Prices, returns, and dependence estimates}
+
+Let $P_{i,t}$ be the closing price of stock $i$ on day $t$. Daily log returns are
+\begin{equation}
+r_{i,t} = \log(P_{i,t}) - \log(P_{i,t-1}).
+\end{equation}
+From the training-period return panel we estimate the Pearson correlation matrix $\bm{\rho}$ and the covariance matrix $\bm{\Sigma}$. These are the inputs to the network and hierarchical methods. Correlation and covariance are estimated from daily log returns; portfolio performance is evaluated in simple returns so that results reflect buy-and-hold wealth dynamics.
+
+Fig.~\ref{fig:corr} shows the training-period correlations. Correlations are not uniform across the index, and blocks of higher correlation often reflect shared sector and market exposure. Grouping stocks by dependence is a practical way to control concentration without requiring explicit return forecasts.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{correlation.png}
+\caption{\label{fig:corr}Correlation heatmap from training-period daily log returns.}
+\end{figure}
+
+\section{\label{sec:methods}Portfolio construction and buy-and-hold evaluation}
+
+Each method produces weights $w_i$ with $w_i \ge 0$ and $\sum_i w_i = 1$. We evaluate a fixed-weight buy-and-hold portfolio via its return series.
+
+Let $t_0$ be the first day of the test window. The buy-and-hold portfolio value is
+\begin{equation}
+V_t = \sum_i w_i \frac{P_{i,t}}{P_{i,t_0}}.
+\end{equation}
+The corresponding daily simple return is
+\begin{equation}
+R^{(p)}_t = \frac{V_t}{V_{t-1}} - 1.
+\end{equation}
+This corresponds to investing according to $w_i$ at $t_0$ and letting weights drift with prices, without rebalancing.
+
+\section{\label{sec:network}Network-based allocations}
+
+\subsection{\label{subsec:network_build}Building the correlation network}
+
+The market is represented as a graph $G=(V,E)$ with one node per stock. Using training-period correlations, we keep only strong positive links to obtain a sparse graph. Let $\rho_{ij}$ be the correlation between stocks $i$ and $j$. We add an undirected edge $(i,j) \in E$ when $\rho_{ij} > \tau$ and set the edge weight to $w_{ij} = \rho_{ij}$.
+
+The threshold $\tau$ is set from a high quantile of the off-diagonal correlations, so the network emphasises the strongest relationships while controlling sparsity \cite{Tumminello2005}.
+
+\subsection{\label{subsec:degeneracy}Degeneracy selection portfolio}
+
+This rule selects a subset of stocks that are weakly connected in the thresholded network. The selection is based on graph degeneracy (k-core): we prioritise less embedded nodes so that the chosen set has limited overlap in strong correlation links \cite{Pozzi2013}. The idea is that if two stocks are linked by a strong correlation edge, holding both adds little diversification under the network definition.
+
+The procedure has two steps. Step 1: include all isolated nodes (degree zero). Step 2: on the remaining subgraph, apply a greedy selection that avoids adjacency---we add a node only if it is not adjacent to any already selected node, processing nodes in order of increasing core number so that less embedded nodes are favoured.
+
+Equal weights are assigned to the selected set $S$:
+\begin{equation}
+w_i = \begin{cases}
+\frac{1}{|S|} & \text{if } i \in S,\\
+0 & \text{otherwise.}
+\end{cases}
+\end{equation}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{degeneracy.png}
+\caption{\label{fig:deg_net}Thresholded correlation network used for the degeneracy selection rule.}
+\end{figure}
+
+\subsection{\label{subsec:eigen}Inverse eigenvector centrality portfolio}
+
+Eigenvector centrality measures how connected a node is to other well-connected nodes. Highly central stocks tend to lie in the core of the dependence structure. To diversify, we reduce exposure to this core while remaining fully invested \cite{Peralta2016}.
+
+Let $\bm{A}$ be the weighted adjacency matrix of the thresholded network. Eigenvector centrality satisfies
+\begin{equation}
+\lambda \bm{s} = \bm{A}\bm{s}.
+\end{equation}
+We turn centrality into long-only weights by tilting against the most central nodes:
+\begin{equation}
+\tilde{s}_i = \left(\max_j s_j - s_i\right) + \varepsilon,
+\qquad
+w_i = \frac{\tilde{s}_i}{\sum_j \tilde{s}_j},
+\end{equation}
+with $\varepsilon > 0$ small to avoid zero weights.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{eigencentrality.png}
+\caption{\label{fig:eigen_net}Thresholded network coloured by eigenvector centrality.}
+\end{figure}
+
+\section{\label{sec:clustering}Clustering-based allocations}
+
+\subsection{\label{subsec:cluster}Cluster equal-weight portfolio}
+
+Hierarchical clustering groups assets using the correlation-based distance
+\begin{equation}
+d_{ij} = \sqrt{\frac{1-\rho_{ij}}{2}}.
+\end{equation}
+We build a dendrogram with average linkage and cut it into $K$ clusters. Denote by $c(i)$ the cluster of stock $i$ and by $|C_{c(i)}|$ the size of that cluster. We allocate equal capital to each cluster and equal capital within each cluster:
+\begin{equation}
+w_i = \frac{1}{K}\cdot \frac{1}{|C_{c(i)}|}.
+\end{equation}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{dendrogram.png}
+\caption{\label{fig:dend_cluster}Dendrogram used for hierarchical clustering.}
+\end{figure}
+
+\subsection{\label{subsec:herc}Hierarchical risk allocation portfolio}
+
+Cluster equal-weighting treats every cluster alike. HERC keeps the hierarchical grouping but uses estimated risk to allocate more weight to lower-risk branches \cite{LopezDePrado2016}.
+
+From the training covariance matrix $\bm{\Sigma}$ we form correlations
+\begin{equation}
+\rho_{ij} = \frac{\Sigma_{ij}}{\sigma_i \sigma_j}, \qquad \sigma_i = \sqrt{\Sigma_{ii}}.
+\end{equation}
+We define the base correlation distance $d_{ij} = \sqrt{(1-\rho_{ij})/2}$ and the second-order distance
+\begin{equation}
+\tilde{d}_{ij} = \left\| D_{\cdot i} - D_{\cdot j} \right\|_2,
+\end{equation}
+where $D$ is the matrix of $d_{ij}$. Ward linkage is applied to $\tilde{d}_{ij}$ to build the hierarchy. The allocation then recursively splits the ordered tree into two subgroups $L$ and $R$. At each split, subgroup variances are estimated using inverse-variance weights:
+\begin{equation}
+\mathrm{Var}(L) = \bm{v}_L^\top \bm{\Sigma}_L \bm{v}_L,
+\qquad
+\bm{v}_L = \frac{\mathrm{diag}(\bm{\Sigma}_L)^{-1}}{\bm{1}^\top \mathrm{diag}(\bm{\Sigma}_L)^{-1}},
+\end{equation}
+and similarly for $R$. Capital is split inversely to these variances:
+\begin{equation}
+\alpha_L = \frac{\mathrm{Var}(R)}{\mathrm{Var}(L)+\mathrm{Var}(R)},
+\qquad
+\alpha_R = \frac{\mathrm{Var}(L)}{\mathrm{Var}(L)+\mathrm{Var}(R)}.
+\end{equation}
+The recursion continues until individual assets are reached, yielding a long-only portfolio.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{herc.png}
+\caption{\label{fig:dend_herc}Dendrogram used by the hierarchical risk allocation method.}
+\end{figure}
+
+\subsection{\label{subsec:kmeans}K-means return and volatility portfolio}
+
+K-means clusters assets in the return--volatility plane. For each stock $i$, we use training-period annualised mean log return and annualised volatility:
+\begin{equation}
+\hat{\mu}_i = 252 \cdot \overline{r_i}, \qquad
+\hat{\sigma}_i = \sqrt{252}\cdot \mathrm{sd}(r_i).
+\end{equation}
+We cluster the points $(\hat{\mu}_i,\hat{\sigma}_i)$ into $K$ clusters and score each cluster by its average return-to-volatility ratio:
+\begin{equation}
+\text{Score}(c) = \frac{\overline{\hat{\mu}}_c}{\overline{\hat{\sigma}}_c}.
+\end{equation}
+We select the top-scoring clusters subject to a minimum cluster size. Capital is allocated across selected clusters in proportion to their non-negative scores, with equal weights within each selected cluster.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{kmeans.png}
+\caption{\label{fig:kmeans_scatter}K-means clusters in the return--volatility plane.}
+\end{figure}
+
+\section{\label{sec:metrics}Performance measurement}
+
+Let $R^{(p)}_t$ and $R^{(b)}_t$ be the daily simple returns of the portfolio and the benchmark. Annualised mean return and volatility are
+\begin{equation}
+\widehat{\mu} = 252\cdot \overline{R^{(p)}}, \qquad
+\widehat{\sigma} = \sqrt{252}\cdot \mathrm{sd}(R^{(p)}).
+\end{equation}
+The Sharpe ratio with zero risk-free rate is
+\begin{equation}
+\text{Sharpe} = \frac{\widehat{\mu}}{\widehat{\sigma}}.
+\end{equation}
+For strategies with constituent weights, we report the diversification ratio $\mathrm{DR} = (\bm{w}^\top \bm{\sigma}) / \sqrt{\bm{w}^\top \bm{\Sigma} \bm{w}}$, where $\bm{\sigma}$ is the vector of asset volatilities and $\bm{\Sigma}$ the covariance matrix of asset returns; the benchmark has no constituent weights so DR is not defined there.
+
+\section{\label{sec:results}Results}
+
+The test period includes episodes that stress diversification, such as the COVID-19 shock and the post-Brexit environment. Fig.~\ref{fig:cum_oos} plots cumulative performance over the test window.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{returns_oos.png}
+\caption{\label{fig:cum_oos}Cumulative returns over the test window.}
+\end{figure}
+
+Table~\ref{tab:metrics_oos} reports annualised mean return, volatility, Sharpe ratio, and diversification ratio (out-of-sample asset returns and fixed weights).
+
+\begin{table}[t]
+\caption{\label{tab:metrics_oos}Test-window performance metrics.}
+\small
+\setlength{\tabcolsep}{3.5pt}
+\begin{ruledtabular}
+\begin{tabular}{lD{.}{.}{3}D{.}{.}{3}D{.}{.}{3}D{.}{.}{3}}
+Portfolio & \multicolumn{1}{c}{Mean (\%)} & \multicolumn{1}{c}{Vol (\%)} & \multicolumn{1}{c}{Sharpe} & \multicolumn{1}{c}{DR} \\
+\hline
+FTSE 100        & 4.052  & 15.424 & 0.263 & \multicolumn{1}{c}{--} \\
+Degeneracy      & 9.447  & 16.605 & 0.569 & 1.909 \\
+Inv.\ eigen.\   & 7.547  & 15.795 & 0.478 & 1.850 \\
+Cluster equal   & 12.344 & 18.159 & 0.680 & 1.862 \\
+K-means         & 8.729  & 18.075 & 0.483 & 1.655 \\
+HERC            & 7.151  & 15.133 & 0.473 & 1.834 \\
+\end{tabular}
+\end{ruledtabular}
+\end{table}
+
+In this test, the cluster equal-weight method attains the highest Sharpe ratio. The network-based methods sit between: the degeneracy rule gives a more concentrated set of names, while the inverse eigenvector centrality portfolio spreads weight with a bias away from the network core. K-means delivers higher mean return than the benchmark but also higher volatility, consistent with its use of estimated return and volatility rather than dependence alone.
+
+\section{\label{sec:conclusion}Conclusion}
+
+This study compares diversification mechanisms rather than offering a ready-made strategy. The methods illustrate different uses of dependence: selecting weakly connected stocks, downweighting the dependence core, spreading capital across correlation clusters, and allocating along a hierarchy using estimated risk.
+
+Natural extensions include multiplex networks that encode tail or rank dependence in addition to linear correlation \cite{JaegerMarinelli2022}, and combining inverse centrality with volatility weighting (e.g. inverse eigenvector centrality with inverse volatility). The effective number of uncorrelated bets could be reported in future work.
+
+In practice, implementation would need to allow for transaction costs, bid--ask spreads, taxes, corporate actions, and index membership changes, and would typically involve periodic rebalancing and constraints on turnover and position size. The long sample is useful because it spans calm and stressed regimes, including Brexit and COVID-19, and thus sheds light on how these diversification rules behave under a strict buy-and-hold design.
+
+\appendix
+
+\section{\label{app:holdings}Portfolio weights}
+
+Table~\ref{tab:appendix_weights} reports portfolio weights in percent.
+
+\begin{table*}[t]
+\caption{\label{tab:appendix_weights}Portfolio weights by ticker (\%).}
+\centering
+\scriptsize
+\begin{tabular}{lrrrrr}
+\toprule
+Ticker & Degeneracy (\%) & Inv.\ eigen.\ (\%) & Cluster eq (\%) & K-means (\%) & HERC (\%) \\
+\midrule
+ADML.L & 3.333 & 1.199 & 0.208 & 1.227 & 1.536 \\
+AHT.L & 3.333 & 1.414 & 0.556 & 3.565 & 0.509 \\
+ALWA.L & 0.000 & 0.412 & 0.190 & 1.227 & 2.911 \\
+ANTO.L & 0.000 & 1.520 & 0.556 & 0.000 & 0.511 \\
+AZN.L & 3.333 & 1.544 & 0.190 & 0.000 & 1.324 \\
+BAB.L & 3.333 & 1.176 & 0.208 & 0.000 & 1.263 \\
+BAES.L & 3.333 & 1.206 & 0.190 & 1.227 & 1.841 \\
+BATS.L & 0.000 & 1.232 & 0.190 & 1.227 & 1.250 \\
+BEZG.L & 0.000 & 1.066 & 0.208 & 1.227 & 1.663 \\
+BKGH.L & 0.000 & 0.816 & 0.208 & 3.565 & 0.256 \\
+BNZL.L & 0.000 & 0.812 & 0.190 & 1.227 & 2.000 \\
+BRBY.L & 3.333 & 1.428 & 0.190 & 0.000 & 0.882 \\
+BT.L & 3.333 & 1.490 & 0.208 & 0.000 & 1.345 \\
+CCH.L & 3.333 & 1.389 & 0.190 & 3.565 & 0.773 \\
+CNA.L & 3.333 & 1.575 & 0.190 & 0.000 & 1.208 \\
+CPG.L & 0.000 & 1.196 & 0.190 & 1.227 & 1.425 \\
+CRDA.L & 0.000 & 1.014 & 0.190 & 1.227 & 2.018 \\
+DCC.L & 3.333 & 1.513 & 6.667 & 1.227 & 2.920 \\
+DGE.L & 0.000 & 1.147 & 0.190 & 1.227 & 1.977 \\
+DPLM.L & 3.333 & 1.598 & 6.667 & 3.565 & 1.702 \\
+ENT.L & 3.333 & 1.598 & 6.667 & 3.565 & 2.241 \\
+EXPN.L & 0.000 & 0.817 & 0.190 & 1.227 & 0.993 \\
+EZJ.L & 3.333 & 1.112 & 0.208 & 0.000 & 0.279 \\
+FCIT.L & 0.000 & 0.345 & 0.190 & 1.227 & 2.078 \\
+FRES.L & 3.333 & 1.598 & 6.667 & 0.000 & 0.907 \\
+GAW.L & 3.333 & 1.598 & 6.667 & 3.565 & 1.621 \\
+GLEN.L & 3.333 & 1.481 & 0.556 & 0.000 & 0.258 \\
+GSK.L & 0.000 & 1.191 & 0.190 & 1.227 & 1.500 \\
+HIK.L & 3.333 & 1.598 & 6.667 & 0.000 & 1.242 \\
+HLMA.L & 0.000 & 0.915 & 0.190 & 1.227 & 1.246 \\
+HSBA.L & 0.000 & 0.842 & 0.556 & 1.227 & 0.948 \\
+HSX.L & 0.000 & 1.159 & 0.208 & 1.227 & 1.937 \\
+ICGIN.L & 0.000 & 0.643 & 0.208 & 3.565 & 0.429 \\
+IHG.L & 0.000 & 0.870 & 0.190 & 1.227 & 0.881 \\
+III.L & 0.000 & 0.197 & 0.208 & 3.565 & 0.975 \\
+IMB.L & 3.333 & 1.478 & 0.190 & 1.227 & 1.803 \\
+INF.L & 0.000 & 1.083 & 0.190 & 1.227 & 1.885 \\
+ITRK.L & 3.333 & 1.352 & 0.190 & 3.565 & 0.898 \\
+JD.L & 3.333 & 1.540 & 6.667 & 3.565 & 0.846 \\
+KGF.L & 3.333 & 1.414 & 0.208 & 0.000 & 1.199 \\
+LMPL.L & 0.000 & 0.835 & 0.208 & 1.227 & 1.056 \\
+LSEG.L & 0.000 & 0.509 & 0.208 & 3.565 & 0.536 \\
+MNDI.L & 0.000 & 0.964 & 0.190 & 3.565 & 0.695 \\
+MRON.L & 3.333 & 1.598 & 6.667 & 3.565 & 1.061 \\
+NG.L & 0.000 & 1.300 & 0.190 & 1.227 & 2.639 \\
+NXT.L & 3.333 & 1.503 & 0.208 & 0.000 & 0.705 \\
+PCT.L & 0.000 & 0.937 & 0.190 & 1.227 & 0.865 \\
+PHNX.L & 0.000 & 0.582 & 0.208 & 1.227 & 1.287 \\
+PSHP.L & 3.333 & 1.598 & 6.667 & 0.000 & 2.266 \\
+PSN.L & 0.000 & 0.696 & 0.208 & 3.565 & 0.469 \\
+PSON.L & 3.333 & 1.598 & 6.667 & 0.000 & 1.040 \\
+REL.L & 0.000 & 1.041 & 0.190 & 1.227 & 1.431 \\
+RKT.L & 0.000 & 1.208 & 0.190 & 1.227 & 1.821 \\
+RMV.L & 3.333 & 0.920 & 0.208 & 3.565 & 0.461 \\
+RR.L & 3.333 & 1.577 & 6.667 & 0.000 & 0.466 \\
+RTO.L & 0.000 & 1.236 & 0.190 & 1.227 & 2.282 \\
+SBRY.L & 0.000 & 1.528 & 3.333 & 0.000 & 0.768 \\
+SGE.L & 3.333 & 1.206 & 0.190 & 1.227 & 1.023 \\
+SGRO.L & 0.000 & 0.661 & 0.208 & 1.227 & 1.257 \\
+SJP.L & 0.000 & 0.120 & 0.208 & 3.565 & 0.416 \\
+SMIN.L & 0.000 & 0.959 & 0.556 & 1.227 & 0.763 \\
+SMT.L & 0.000 & 0.724 & 0.190 & 1.227 & 0.867 \\
+SN.L & 0.000 & 1.039 & 0.190 & 1.227 & 1.047 \\
+SPX.L & 0.000 & 1.073 & 0.190 & 1.227 & 0.997 \\
+SVT.L & 0.000 & 1.386 & 0.190 & 1.227 & 1.344 \\
+TSCO.L & 3.333 & 1.595 & 3.333 & 0.000 & 0.576 \\
+ULVR.L & 0.000 & 1.231 & 0.190 & 1.227 & 1.396 \\
+VOD.L & 3.333 & 1.083 & 0.190 & 1.227 & 1.235 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\section{\label{app:impl}Reproducibility}
+
+The implementation and instructions to reproduce the results are available at
+\begin{center}
+\url{https://github.com/AUEBs-INVESTMENT-FINANCE-CLUB/network-clustering-portfolios}
+\end{center}
+
+\bibliographystyle{apsrev4-2}
+\begin{thebibliography}{99}
+
+\bibitem{Tumminello2005}
+M. Tumminello, T. Aste, T. Di Matteo, and R. N. Mantegna, ``A tool for filtering information in complex systems,'' \emph{Proc. Natl. Acad. Sci. USA} \textbf{102}, 10421--10426 (2005).
+
+\bibitem{Tumminello2010}
+M. Tumminello, F. Lillo, and R. N. Mantegna, ``Correlation, hierarchies, and networks in financial markets,'' \emph{J. Econ. Behav. Organ.} \textbf{75}, 40--58 (2010).
+
+\bibitem{Pozzi2013}
+F. Pozzi, T. Di Matteo, and T. Aste, ``Spread of risk across financial markets: better to invest in the peripheries,'' \emph{Sci. Rep.} \textbf{3}, 1665 (2013).
+
+\bibitem{Peralta2016}
+G. Peralta and A. Zareei, ``A network approach to portfolio selection,'' SSRN Working Paper (2016).
+
+\bibitem{LopezDePrado2016}
+M. L\'opez de Prado, ``Building diversified portfolios that outperform out of sample,'' \emph{J. Portfolio Manag.} \textbf{42}(4), 59--69 (2016).
+
+\bibitem{JaegerMarinelli2022}
+M. Jaeger and D. Marinelli, ``Network diversification for a robust portfolio allocation,'' SSRN 4068889 (2022).
+
+\bibitem{KonstantinovFabozzi2023}
+G. S. Konstantinov and F. J. Fabozzi, \emph{Network Models in Finance: Expanding the Tools for Portfolio and Risk Management} (Wiley, 2023).
+
+\end{thebibliography}
+
+\end{document}
