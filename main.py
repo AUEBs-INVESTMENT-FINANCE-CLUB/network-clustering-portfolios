@@ -1,3 +1,6 @@
+import shutil
+import warnings
+
 import numpy as np
 import pandas as pd
 import networkx as nx
@@ -25,7 +28,7 @@ from clustering import (
     kmeans_cluster_retvol, build_kmeans_weights, plot_kmeans_scatter
 )
 from plots import (
-    plotly_correlation_heatmap, save_plotly,
+    plotly_correlation_heatmap, save_plotly, save_plotly_png,
     plot_cumulative_returns, plot_mean_variance_scatter
 )
 from metrics import metrics_table_from_values
@@ -140,6 +143,7 @@ if __name__ == "__main__":
         show_values=False
     )
     save_plotly(fig_corr_is, f"corr_heatmap_{IN_SAMPLE_START}_{IN_SAMPLE_END}.html")
+    save_plotly_png(fig_corr_is, "correlation.png")
 
     in_sample_data = in_sample_prices[components].copy()
     in_sample_data["FTSE100"] = metadata.loc[in_sample_data.index, "FTSE100"].ffill()
@@ -172,6 +176,7 @@ if __name__ == "__main__":
         default_color="#D3D3D3",
     )
     save_plotly(fig_deg, f"network_degeneracy_{IN_SAMPLE_START}_{IN_SAMPLE_END}.html")
+    save_plotly_png(fig_deg, "degeneracy.png")
 
     eigen_w_central = eigenvector_centrality_weights(in_sample_graph, components, inverse=True)
     eigen_w_central = restrict_weights_to_universe(eigen_w_central, components, "eigen_central")
@@ -196,6 +201,7 @@ if __name__ == "__main__":
         colorbar_title="Eigenvector Centrality",
     )
     save_plotly(fig_eigen, f"network_eigen_centrality_{IN_SAMPLE_START}_{IN_SAMPLE_END}.html")
+    save_plotly_png(fig_eigen, "eigencentrality.png")
 
     cluster_labels, Z_cluster = hierarchical_clusters_from_corr(
         in_sample_correlation, method="average", max_clusters=HIER_MAX_CLUSTERS
@@ -211,6 +217,17 @@ if __name__ == "__main__":
         "Dendrogram: Cluster Equal-Weight (average, corr-distance)",
         f"dendrogram_cluster_equal_{IN_SAMPLE_START}_{IN_SAMPLE_END}.png"
     )
+    try:
+        shutil.copy(
+            OUTPUT_DIR / f"dendrogram_cluster_equal_{IN_SAMPLE_START}_{IN_SAMPLE_END}.png",
+            OUTPUT_DIR / "dendrogram.png",
+        )
+    except Exception as e:
+        warnings.warn(
+            f"Article copy dendrogram.png skipped: {e}",
+            UserWarning,
+            stacklevel=2,
+        )
 
     in_sample_cov = in_sample_returns.cov()
     herc_w = herc_weights(
@@ -241,6 +258,17 @@ if __name__ == "__main__":
         "Dendrogram: HERC (ward, distance-of-distance)",
         f"dendrogram_herc_{IN_SAMPLE_START}_{IN_SAMPLE_END}.png"
     )
+    try:
+        shutil.copy(
+            OUTPUT_DIR / f"dendrogram_herc_{IN_SAMPLE_START}_{IN_SAMPLE_END}.png",
+            OUTPUT_DIR / "herc.png",
+        )
+    except Exception as e:
+        warnings.warn(
+            f"Article copy herc.png skipped: {e}",
+            UserWarning,
+            stacklevel=2,
+        )
 
     stats = compute_annualized_return_vol(in_sample_returns, periods_per_year=PERIODS_PER_YEAR)
 
@@ -270,6 +298,15 @@ if __name__ == "__main__":
         title=f"K-Means (k={KMEANS_K}) Clusters: Annualized Return vs Volatility"
     )
     save_plotly(fig_km_scatter, f"kmeans_scatter_{IN_SAMPLE_START}_{IN_SAMPLE_END}.html")
+    save_plotly_png(fig_km_scatter, "kmeans.png")
+
+    weights_map = {
+        "degeneracy": deg_w,
+        "eigen_central": eigen_w_central,
+        "cluster_equal": cluster_w,
+        "kmeans": kmeans_w,
+        "herc": herc_w,
+    }
 
     portfolios = [
         "FTSE100",
@@ -292,7 +329,14 @@ if __name__ == "__main__":
     label_map = {p: style_map[p][2] for p in portfolios}
     color_map = {p: style_map[p][0] for p in portfolios}
 
-    metrics_is = metrics_table_from_values(in_sample_data, portfolios, bench_name="FTSE100", periods_per_year=PERIODS_PER_YEAR)
+    metrics_is = metrics_table_from_values(
+        in_sample_data,
+        portfolios,
+        bench_name="FTSE100",
+        periods_per_year=PERIODS_PER_YEAR,
+        asset_returns=in_sample_returns[components],
+        weights_map=weights_map,
+    )
     metrics_is.to_csv(OUTPUT_DIR / f"metrics_in_sample_{IN_SAMPLE_START}_{IN_SAMPLE_END}.csv")
 
     fig_cum_is = plot_cumulative_returns(in_sample_data, portfolios, style_map)
@@ -322,7 +366,16 @@ if __name__ == "__main__":
     out_sample_data["herc"] = compute_weighted_portfolio(out_sample_data, herc_w, "herc")
     out_sample_data["kmeans"] = compute_weighted_portfolio(out_sample_data, kmeans_w, "kmeans")
 
-    metrics_os = metrics_table_from_values(out_sample_data, portfolios, bench_name="FTSE100", periods_per_year=PERIODS_PER_YEAR)
+    out_sample_asset_returns = np.log(out_sample_prices).diff().dropna()
+
+    metrics_os = metrics_table_from_values(
+        out_sample_data,
+        portfolios,
+        bench_name="FTSE100",
+        periods_per_year=PERIODS_PER_YEAR,
+        asset_returns=out_sample_asset_returns,
+        weights_map=weights_map,
+    )
     metrics_os.to_csv(OUTPUT_DIR / f"metrics_out_sample_{OUT_SAMPLE_START}_{OUT_SAMPLE_END}.csv")
 
     print("\n--- OUT-OF-SAMPLE METRICS (Test Phase) ---")
@@ -330,6 +383,7 @@ if __name__ == "__main__":
 
     fig_cum_os = plot_cumulative_returns(out_sample_data, portfolios, style_map)
     save_plotly(fig_cum_os, f"cumulative_out_sample_{OUT_SAMPLE_START}_{OUT_SAMPLE_END}.html")
+    save_plotly_png(fig_cum_os, "returns_oos.png")
 
     fig_mv_os = plot_mean_variance_scatter(
         out_sample_data,
@@ -339,14 +393,6 @@ if __name__ == "__main__":
         f"Mean-Variance Analysis ({OUT_SAMPLE_START}-{OUT_SAMPLE_END})"
     )
     save_plotly(fig_mv_os, f"mean_variance_out_sample_{OUT_SAMPLE_START}_{OUT_SAMPLE_END}.html")
-
-    weights_map = {
-        "degeneracy": deg_w,
-        "eigen_central": eigen_w_central,
-        "cluster_equal": cluster_w,
-        "kmeans": kmeans_w,
-        "herc": herc_w,
-    }
 
     for name, w in weights_map.items():
         save_weights_csv(w, name)
