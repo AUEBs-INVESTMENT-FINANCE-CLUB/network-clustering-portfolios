@@ -1,4 +1,5 @@
 from typing import Dict, Tuple, List, Optional
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -55,6 +56,20 @@ def plotly_correlation_heatmap(
 def save_plotly(fig: go.Figure, filename: str) -> None:
     path = OUTPUT_DIR / filename
     fig.write_html(str(path), include_plotlyjs="cdn")
+
+
+def save_plotly_png(fig: go.Figure, filename: str, scale: float = 2.0) -> None:
+    
+    path = OUTPUT_DIR / filename
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fig.write_image(str(path), scale=scale)
+    except Exception as e:
+        warnings.warn(
+            f"PNG export skipped for {filename}: {e}. Try: pip install -U kaleido plotly",
+            UserWarning,
+            stacklevel=2,
+        )
 
 
 def plot_cumulative_returns(
