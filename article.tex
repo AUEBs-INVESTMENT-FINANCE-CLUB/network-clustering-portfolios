@@ -27,11 +27,11 @@ We study portfolio construction on FTSE 100 equities using correlation structure
 
 \section{\label{sec:design}Design and setup}
 
-We use a split-sample design. Portfolio weights are estimated on an initial training window and then kept fixed over a later test window. We do not rebalance in the test phase, so the comparison reflects how each diversification rule behaves when exposures are held constant.
+We use a split-sample design. Portfolio weights are estimated on an initial training window and then kept fixed over a later test window. We use 2015--2017 as the training window and 2018--2025 as the test window. We do not rebalance in the test phase, so the comparison reflects how each diversification rule behaves when exposures are held constant.
 
-All portfolios are evaluated on the same set of stocks. We retain only stocks with a valid price series over the full horizon used in the study, so the investable universe is unchanged across training and test periods. Differences in outcomes therefore stem from the allocation rules rather than from differing constituents.
+All portfolios are evaluated on the same set of stocks. The investable universe is the set of stocks with a valid price at the start of the test window and sufficient data in the training window (e.g.\ 90\% non-missing); no information from the test window beyond the existence of a tradable price at $t_0$ is used to define the universe. The universe is unchanged across training and test periods, so differences in outcomes stem from the allocation rules rather than from differing constituents.
 
-All computations use daily closing prices. Annualization follows a 252 trading-day convention. The evaluation window includes stressed periods such as Brexit-related uncertainty and the COVID-19 shock, which provides a natural stress test for dependence-based diversification under a strict buy-and-hold design.
+All computations use daily closing prices from LSEG Reuters Workspace. Annualization follows a 252 trading-day convention. The evaluation window includes stressed periods such as Brexit-related uncertainty and the COVID-19 shock, which provides a natural stress test for dependence-based diversification under a strict buy-and-hold design.
 
 \section{\label{sec:data}Prices, returns, and dependence estimates}
 
@@ -69,7 +69,7 @@ This corresponds to investing according to $w_i$ at $t_0$ and letting weights dr
 
 The market is represented as a graph $G=(V,E)$ with one node per stock. Using training-period correlations, we keep only strong positive links to obtain a sparse graph. Let $\rho_{ij}$ be the correlation between stocks $i$ and $j$. We add an undirected edge $(i,j) \in E$ when $\rho_{ij} > \tau$ and set the edge weight to $w_{ij} = \rho_{ij}$.
 
-The threshold $\tau$ is set from a high quantile of the off-diagonal correlations, so the network emphasises the strongest relationships while controlling sparsity \cite{Tumminello2005}.
+The threshold $\tau$ is set at the 80th percentile of the off-diagonal correlations, so the network emphasises the strongest relationships while controlling sparsity \cite{Tumminello2005}.
 
 \subsection{\label{subsec:degeneracy}Degeneracy selection portfolio}
 
@@ -121,7 +121,7 @@ Hierarchical clustering groups assets using the correlation-based distance
 \begin{equation}
 d_{ij} = \sqrt{\frac{1-\rho_{ij}}{2}}.
 \end{equation}
-We build a dendrogram with average linkage and cut it into $K$ clusters. Denote by $c(i)$ the cluster of stock $i$ and by $|C_{c(i)}|$ the size of that cluster. We allocate equal capital to each cluster and equal capital within each cluster:
+We build a dendrogram with average linkage and cut it into $K=15$ clusters. Denote by $c(i)$ the cluster of stock $i$ and by $|C_{c(i)}|$ the size of that cluster. We allocate equal capital to each cluster and equal capital within each cluster:
 \begin{equation}
 w_i = \frac{1}{K}\cdot \frac{1}{|C_{c(i)}|}.
 \end{equation}
@@ -171,11 +171,11 @@ K-means clusters assets in the return--volatility plane. For each stock $i$, we 
 \hat{\mu}_i = 252 \cdot \overline{r_i}, \qquad
 \hat{\sigma}_i = \sqrt{252}\cdot \mathrm{sd}(r_i).
 \end{equation}
-We cluster the points $(\hat{\mu}_i,\hat{\sigma}_i)$ into $K$ clusters and score each cluster by its average return-to-volatility ratio:
+We cluster the points $(\hat{\mu}_i,\hat{\sigma}_i)$ into $K=4$ clusters and score each cluster by its average return-to-volatility ratio:
 \begin{equation}
 \text{Score}(c) = \frac{\overline{\hat{\mu}}_c}{\overline{\hat{\sigma}}_c}.
 \end{equation}
-We select the top-scoring clusters subject to a minimum cluster size. Capital is allocated across selected clusters in proportion to their non-negative scores, with equal weights within each selected cluster.
+We select the top-scoring clusters subject to a minimum cluster size. Capital is allocated across selected clusters in proportion to their non-negative scores, with equal weights within each selected cluster. K-means is run with a fixed seed for reproducibility.
 
 \begin{figure}[t]
 \centering
@@ -185,7 +185,7 @@ We select the top-scoring clusters subject to a minimum cluster size. Capital is
 
 \section{\label{sec:metrics}Performance measurement}
 
-Let $R^{(p)}_t$ and $R^{(b)}_t$ be the daily simple returns of the portfolio and the benchmark. Annualised mean return and volatility are
+Let $R^{(p)}_t$ and $R^{(b)}_t$ be the daily simple returns of the portfolio and the benchmark. Dependence estimates $(\bm{\rho},\bm{\Sigma})$ are computed from training-period daily log returns, while $R^{(p)}_t$ is the daily simple return implied by the buy-and-hold wealth path $V_t$. Annualised mean return and volatility are
 \begin{equation}
 \widehat{\mu} = 252\cdot \overline{R^{(p)}}, \qquad
 \widehat{\sigma} = \sqrt{252}\cdot \mathrm{sd}(R^{(p)}).
@@ -206,7 +206,7 @@ The test period includes episodes that stress diversification, such as the COVID
 \caption{\label{fig:cum_oos}Cumulative returns over the test window.}
 \end{figure}
 
-Table~\ref{tab:metrics_oos} reports annualised mean return, volatility, Sharpe ratio, and diversification ratio (out-of-sample asset returns and fixed weights).
+We focus on first-moment and volatility-based metrics plus diversification ratio; downside-risk measures are left for future work. Table~\ref{tab:metrics_oos} reports annualised mean return, volatility, Sharpe ratio, and diversification ratio (out-of-sample asset returns and fixed weights).
 
 \begin{table}[t]
 \caption{\label{tab:metrics_oos}Test-window performance metrics.}
@@ -214,7 +214,7 @@ Table~\ref{tab:metrics_oos} reports annualised mean return, volatility, Sharpe r
 \setlength{\tabcolsep}{3.5pt}
 \begin{ruledtabular}
 \begin{tabular}{lD{.}{.}{3}D{.}{.}{3}D{.}{.}{3}D{.}{.}{3}}
-Portfolio & \multicolumn{1}{c}{Mean (\%)} & \multicolumn{1}{c}{Vol (\%)} & \multicolumn{1}{c}{Sharpe} & \multicolumn{1}{c}{DR} \\
+Portfolio & \multicolumn{1}{c}{MeanRet (\%)} & \multicolumn{1}{c}{Vol (\%)} & \multicolumn{1}{c}{Sharpe} & \multicolumn{1}{c}{DR} \\
 \hline
 FTSE 100        & 4.052  & 15.424 & 0.263 & \multicolumn{1}{c}{--} \\
 Degeneracy      & 9.447  & 16.605 & 0.569 & 1.909 \\

@@ -59,7 +59,6 @@ def save_plotly(fig: go.Figure, filename: str) -> None:
 
 
 def save_plotly_png(fig: go.Figure, filename: str, scale: float = 2.0) -> None:
-    
     path = OUTPUT_DIR / filename
     path.parent.mkdir(parents=True, exist_ok=True)
     try:

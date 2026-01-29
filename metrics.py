@@ -6,10 +6,6 @@ import pandas as pd
 
 
 def diversification_ratio(weights: pd.Series, asset_returns: pd.DataFrame) -> float:
-    """
-    Diversification ratio: DR = (w' sigma) / sqrt(w' Sigma w),
-    where sigma is the vector of asset volatilities and Sigma is the covariance matrix.
-    """
     if asset_returns is None or asset_returns.empty:
         return np.nan
 
