@@ -4,3 +4,14 @@
 # Ignore Jupyter notebook checkpoints
 .ipynb_checkpoints/
 
+*.tex
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+.env
+.env.local
