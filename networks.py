@@ -33,22 +33,6 @@ def create_graph(components: List[str], correlation: pd.DataFrame, threshold: fl
     return graph, layout
 
 
-def create_full_correlation_graph(components: List[str], correlation: pd.DataFrame) -> nx.Graph:
-    graph = nx.Graph()
-    valid_components = [c for c in components if c in correlation.index and c in correlation.columns]
-    graph.add_nodes_from(valid_components)
-
-    for i in range(len(valid_components)):
-        for j in range(i + 1, len(valid_components)):
-            stock_i = valid_components[i]
-            stock_j = valid_components[j]
-            corr_val = correlation.loc[stock_i, stock_j]
-            weight = max(corr_val, 0.0)
-            if weight > 0:
-                graph.add_edge(stock_i, stock_j, weight=weight)
-    return graph
-
-
 def degeneracy_ordering(graph: nx.Graph, components: List[str]) -> Tuple[List[str], List[str]]:
     isolated = [node for node in graph.nodes() if graph.degree(node) == 0]
     non_isolated = [node for node in graph.nodes() if graph.degree(node) > 0]
@@ -86,7 +70,7 @@ def eigenvector_centrality_weights(graph: nx.Graph, components: List[str], inver
         inv = (ec.max() - ec).clip(lower=0.0) + eps
         ec = inv
 
-    if ec.sum() != 0:
+    if abs(ec.sum()) > 1e-10:
         ec = ec / ec.sum()
 
     ec.name = "eigen_centrality"
