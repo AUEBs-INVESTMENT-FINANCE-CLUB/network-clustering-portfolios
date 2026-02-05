@@ -11,7 +11,7 @@ def diversification_ratio(weights: pd.Series, asset_returns: pd.DataFrame) -> fl
 
     w = weights.reindex(asset_returns.columns).fillna(0.0).astype(float)
     s = float(w.sum())
-    if s == 0.0:
+    if abs(s) < 1e-10:
         return np.nan
     w = w / s
 
@@ -31,7 +31,7 @@ def diversification_ratio(weights: pd.Series, asset_returns: pd.DataFrame) -> fl
 
 def compute_performance_metrics(returns: pd.Series, periods_per_year: int = 252) -> Dict[str, float]:
     returns = returns.dropna()
-    if len(returns) == 0 or float(returns.std(ddof=1)) == 0.0:
+    if len(returns) == 0 or abs(float(returns.std(ddof=1))) < 1e-10:
         return {"mean_return": np.nan, "volatility": np.nan, "sharpe_ratio": np.nan}
 
     mean_return = float(returns.mean()) * periods_per_year
