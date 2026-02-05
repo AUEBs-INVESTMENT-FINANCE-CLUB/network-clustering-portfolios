@@ -16,9 +16,9 @@ from config import (
 )
 
 from data_io import load_ftse100_data, preprocess_returns
-from portfolio_utils import compute_weighted_portfolio, compute_equal_weighted_portfolio, validate_portfolio_weights
+from portfolio_utils import compute_weighted_portfolio, validate_portfolio_weights
 from networks import (
-    create_graph, create_full_correlation_graph, degeneracy_ordering,
+    create_graph, degeneracy_ordering,
     eigenvector_centrality_weights, plotly_network
 )
 from clustering import (
@@ -37,7 +37,7 @@ from metrics import metrics_table_from_values
 def restrict_weights_to_universe(weights: pd.Series, universe: list, name: str) -> pd.Series:
     w = weights.reindex(universe).fillna(0.0).astype(float)
     s = float(w.sum())
-    if s != 0.0:
+    if abs(s) > 1e-10:
         w = w / s
     w.name = name
     return w
@@ -45,7 +45,7 @@ def restrict_weights_to_universe(weights: pd.Series, universe: list, name: str) 
 
 def save_weights_csv(w: pd.Series, name: str) -> None:
     w = w.reindex(w.index).fillna(0.0).astype(float)
-    w = w / w.sum() if float(w.sum()) != 0.0 else w
+    w = w / w.sum() if abs(float(w.sum())) > 1e-10 else w
     w = w.sort_values(ascending=False)
     df = pd.DataFrame({"Weight": w, "Weight_%": 100.0 * w})
     df.to_csv(OUTPUT_DIR / f"weights_{name}.csv")
@@ -73,7 +73,7 @@ def build_appendix_holdings_table(
 
     pretty_cols = {
         "degeneracy": "Degeneracy (%)",
-        "eigen_central": "Eigen tilt (%)",
+        "eigen_central": "Inv. eigen. (%)",
         "cluster_equal": "Cluster eq (%)",
         "kmeans": "K-means (%)",
         "herc": "HERC (%)",
@@ -154,7 +154,6 @@ if __name__ == "__main__":
     threshold = np.quantile(upper, NETWORK_THRESHOLD_QUANTILE)
 
     in_sample_graph, in_sample_layout = create_graph(components, in_sample_correlation, threshold)
-    _ = create_full_correlation_graph(components, in_sample_correlation)
 
     isolated, independence = degeneracy_ordering(in_sample_graph, components)
     selected_stocks_deg = [s for s in (isolated + independence) if s in components]
@@ -242,7 +241,7 @@ if __name__ == "__main__":
 
     std_dev = np.sqrt(np.diag(in_sample_cov.values))
     denom = np.outer(std_dev, std_dev)
-    denom = np.where(denom == 0, np.nan, denom)
+    denom = np.where(abs(denom) < 1e-10, np.nan, denom)
     corr_from_cov = in_sample_cov.values / denom
     corr_from_cov = np.nan_to_num(corr_from_cov, nan=0.0, posinf=0.0, neginf=0.0)
     corr_from_cov = np.clip(corr_from_cov, -1.0, 1.0)
