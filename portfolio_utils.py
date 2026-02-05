@@ -9,7 +9,7 @@ def compute_weighted_portfolio(prices: pd.DataFrame, weights: pd.Series, name: s
 
     w = weights.astype(float).copy()
     w = w.reindex([c for c in w.index if c in prices.columns]).fillna(0.0)
-    if float(w.sum()) == 0.0:
+    if abs(w.sum()) < 1e-10:
         return pd.Series(np.nan, index=prices.index, name=name)
     w = w / float(w.sum())
 
@@ -31,16 +31,8 @@ def compute_weighted_portfolio(prices: pd.DataFrame, weights: pd.Series, name: s
     return portfolio
 
 
-def compute_equal_weighted_portfolio(prices: pd.DataFrame, selected_stocks: List[str], name: str = "portfolio") -> pd.Series:
-    selected = [s for s in selected_stocks if s in prices.columns]
-    if len(selected) == 0:
-        return pd.Series(np.nan, index=prices.index, name=name)
-    w = pd.Series(1.0 / len(selected), index=selected, dtype=float)
-    return compute_weighted_portfolio(prices, w, name=name)
-
-
 def validate_portfolio_weights(weights: pd.Series, name: str = "portfolio", tolerance: float = 1e-4) -> None:
-    if float(weights.sum()) == 0.0:
+    if abs(weights.sum()) < 1e-10:
         print(f"Warning: {name} weights sum to zero.")
         return
     assert abs(float(weights.sum()) - 1.0) < tolerance, f"{name}: weights sum to {weights.sum():.8f}, expected 1.0"
