@@ -365,7 +365,7 @@ if __name__ == "__main__":
     out_sample_data["herc"] = compute_weighted_portfolio(out_sample_data, herc_w, "herc")
     out_sample_data["kmeans"] = compute_weighted_portfolio(out_sample_data, kmeans_w, "kmeans")
 
-    out_sample_asset_returns = np.log(out_sample_prices).diff().dropna()
+    out_sample_asset_returns = out_sample_prices.pct_change().dropna()
 
     metrics_os = metrics_table_from_values(
         out_sample_data,

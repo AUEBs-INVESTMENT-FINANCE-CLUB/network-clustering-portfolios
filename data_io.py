@@ -62,7 +62,7 @@ def preprocess_returns(
             "This usually means leading NaNs at the in-sample start date."
         )
 
-    logret = np.log(prices).diff().dropna(how="any")
+    returns = prices.pct_change().dropna(how="any")
 
-    correlation = logret.corr()
-    return logret, correlation, prices
+    correlation = returns.corr()
+    return returns, correlation, prices
