@@ -1,6 +1,3 @@
-import shutil
-import warnings
-
 import numpy as np
 import pandas as pd
 import networkx as nx
@@ -279,6 +276,7 @@ if __name__ == "__main__":
         asset_returns=in_sample_returns[components],
         weights_map=weights_map,
     )
+    metrics_is.to_csv(OUTPUT_DIR / f"metrics_in_sample_{IN_SAMPLE_START}_{IN_SAMPLE_END}.csv")
     print("\nIn-Sample Performance Metrics:")
     print(metrics_is.to_string())
     fig_cum_is = plot_cumulative_returns(in_sample_data, portfolios, style_map)
@@ -304,6 +302,7 @@ if __name__ == "__main__":
         asset_returns=out_sample_asset_returns,
         weights_map=weights_map,
     )
+    metrics_os.to_csv(OUTPUT_DIR / f"metrics_out_sample_{OUT_SAMPLE_START}_{OUT_SAMPLE_END}.csv")
     print("\nOut-of-Sample Performance Metrics:")
     print(metrics_os.to_string())
     fig_cum_os = plot_cumulative_returns(out_sample_data, portfolios, style_map)
